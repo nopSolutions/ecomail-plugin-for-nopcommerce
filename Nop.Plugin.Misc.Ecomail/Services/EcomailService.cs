@@ -13,6 +13,7 @@ using Microsoft.AspNetCore.Mvc.Infrastructure;
 using Microsoft.AspNetCore.Mvc.Routing;
 using Newtonsoft.Json;
 using Nop.Core;
+using Nop.Core.Domain.Catalog;
 using Nop.Core.Domain.Common;
 using Nop.Core.Domain.Customers;
 using Nop.Core.Domain.Directory;
@@ -37,6 +38,7 @@ using Nop.Services.Orders;
 using Nop.Services.Seo;
 using Nop.Services.Stores;
 using Nop.Services.Tax;
+using Nop.Web.Framework.Mvc.Routing;
 
 namespace Nop.Plugin.Misc.Ecomail.Services
 {
@@ -69,7 +71,6 @@ namespace Nop.Plugin.Misc.Ecomail.Services
         private readonly IRepository<Address> _addressRepository;
         private readonly IRepository<Country> _countryRepository;
         private readonly IRepository<Customer> _customerRepository;
-        private readonly IRepository<GenericAttribute> _genericAttributeRepository;
         private readonly IRepository<NewsLetterSubscription> _newsLetterSubscriptionRepository;
         private readonly IRepository<Order> _orderRepository;
         private readonly IRepository<OrderItem> _orderItemRepository;
@@ -108,7 +109,6 @@ namespace Nop.Plugin.Misc.Ecomail.Services
             IRepository<Address> addressRepository,
             IRepository<Country> countryRepository,
             IRepository<Customer> customerRepository,
-            IRepository<GenericAttribute> genericAttributeRepository,
             IRepository<NewsLetterSubscription> newsLetterSubscriptionRepository,
             IRepository<Order> orderRepository,
             IRepository<OrderItem> orderItemRepository,
@@ -143,7 +143,6 @@ namespace Nop.Plugin.Misc.Ecomail.Services
             _addressRepository = addressRepository;
             _countryRepository = countryRepository;
             _customerRepository = customerRepository;
-            _genericAttributeRepository = genericAttributeRepository;
             _newsLetterSubscriptionRepository = newsLetterSubscriptionRepository;
             _orderRepository = orderRepository;
             _orderItemRepository = orderItemRepository;
@@ -447,20 +446,6 @@ namespace Nop.Plugin.Misc.Ecomail.Services
         {
             var subscribers = new List<SubscriberDataRequest>();
 
-            var attributeNames = new[]
-            {
-                NopCustomerDefaults.FirstNameAttribute,
-                NopCustomerDefaults.LastNameAttribute,
-                NopCustomerDefaults.CountryIdAttribute,
-                NopCustomerDefaults.CompanyAttribute,
-                NopCustomerDefaults.CityAttribute,
-                NopCustomerDefaults.StreetAddressAttribute,
-                NopCustomerDefaults.ZipPostalCodeAttribute,
-                NopCustomerDefaults.PhoneAttribute,
-                NopCustomerDefaults.DateOfBirthAttribute,
-                NopCustomerDefaults.GenderAttribute
-            };
-
             //get contacts of newsletter subscribers
             var contactValues = _newsLetterSubscriptionRepository.Table
                 .Where(subscription => subscription.Active && subscription.StoreId == storeId)
@@ -471,37 +456,41 @@ namespace Nop.Plugin.Misc.Ecomail.Services
                     subscription => subscription.Email,
                     customer => customer.Email,
                     (subscription, customer) => new { Customer = customer, Active = subscription.Active })
-                .Join(_genericAttributeRepository.Table.Where(attribute => attribute.KeyGroup == nameof(Customer) && attributeNames.Contains(attribute.Key)),
-                    customer => customer.Customer.Id,
-                    attribute => attribute.EntityId,
-                    (customer, attribute) => new { Customer = customer.Customer, Active = customer.Active, Name = attribute.Key, Value = attribute.Value })
-                .SelectMany(customerAttribute => _countryRepository.Table
-                    .Where(country => customerAttribute.Name == NopCustomerDefaults.CountryIdAttribute && country.Id.ToString() == customerAttribute.Value)
+                .SelectMany(customer => _countryRepository.Table
+                    .Where(country => country.Id == customer.Customer.CountryId)
                     .DefaultIfEmpty(),
-                    (customerAttribute, country) => new
+                    (customer, country) => new
                     {
-                        Id = customerAttribute.Customer.Id,
-                        Active = customerAttribute.Active,
-                        Email = customerAttribute.Customer.Email,
-                        Name = customerAttribute.Name,
-                        Value = customerAttribute.Name == NopCustomerDefaults.CountryIdAttribute ? country.TwoLetterIsoCode : customerAttribute.Value
+                        Id = customer.Customer.Id,
+                        Active = customer.Active,
+                        Email = customer.Customer.Email,
+                        FirstName = customer.Customer.FirstName,
+                        LastName = customer.Customer.LastName,
+                        Company = customer.Customer.Company,
+                        City = customer.Customer.City,
+                        Street = customer.Customer.StreetAddress,
+                        Zip = customer.Customer.ZipPostalCode,
+                        Country = country.TwoLetterIsoCode,
+                        Phone = customer.Customer.Phone,
+                        Birthday = customer.Customer.DateOfBirth,
+                        Gender = customer.Customer.Gender
                     })
-                .GroupBy(customerAttribute => customerAttribute.Email)
-                .Select(customerAttributes => new
+                .GroupBy(customer => customer.Email)
+                .Select(customer => new
                 {
-                    Email = customerAttributes.Key,
-                    Id = customerAttributes.FirstOrDefault().Id,
-                    Active = customerAttributes.FirstOrDefault().Active,
-                    FirstName = customerAttributes.FirstOrDefault(item => item.Name == NopCustomerDefaults.FirstNameAttribute).Value,
-                    LastName = customerAttributes.FirstOrDefault(item => item.Name == NopCustomerDefaults.LastNameAttribute).Value,
-                    Company = customerAttributes.FirstOrDefault(item => item.Name == NopCustomerDefaults.CompanyAttribute).Value,
-                    City = customerAttributes.FirstOrDefault(item => item.Name == NopCustomerDefaults.CityAttribute).Value,
-                    Street = customerAttributes.FirstOrDefault(item => item.Name == NopCustomerDefaults.StreetAddressAttribute).Value,
-                    Zip = customerAttributes.FirstOrDefault(item => item.Name == NopCustomerDefaults.ZipPostalCodeAttribute).Value,
-                    Country = customerAttributes.FirstOrDefault(item => item.Name == NopCustomerDefaults.CountryIdAttribute).Value,
-                    Phone = customerAttributes.FirstOrDefault(item => item.Name == NopCustomerDefaults.PhoneAttribute).Value,
-                    Birthday = customerAttributes.FirstOrDefault(item => item.Name == NopCustomerDefaults.DateOfBirthAttribute).Value,
-                    Gender = customerAttributes.FirstOrDefault(item => item.Name == NopCustomerDefaults.GenderAttribute).Value
+                    Email = customer.Key,
+                    Id = customer.FirstOrDefault().Id,
+                    Active = customer.FirstOrDefault().Active,
+                    FirstName = customer.FirstOrDefault().FirstName,
+                    LastName = customer.FirstOrDefault().LastName,
+                    Company = customer.FirstOrDefault().Company,
+                    City = customer.FirstOrDefault().City,
+                    Street = customer.FirstOrDefault().Street,
+                    Zip = customer.FirstOrDefault().Zip,
+                    Country = customer.FirstOrDefault().Country,
+                    Phone = customer.FirstOrDefault().Phone,
+                    Birthday = customer.FirstOrDefault().Birthday,
+                    Gender = customer.FirstOrDefault().Gender
                 })
                 .ToList();
 
@@ -525,7 +514,7 @@ namespace Nop.Plugin.Misc.Ecomail.Services
                     Zip = contact.Zip ?? string.Empty,
                     Country = contact.Country ?? string.Empty,
                     Phone = contact.Phone ?? string.Empty,
-                    Birthday = contact.Birthday ?? string.Empty,
+                    Birthday = contact.Birthday?.ToShortDateString() ?? string.Empty,
                     Gender = string.IsNullOrEmpty(contact.Gender)
                         ? string.Empty
                         : contact.Gender.Equals("M", StringComparison.InvariantCultureIgnoreCase) ? "male" : "female",
@@ -731,7 +720,7 @@ namespace Nop.Plugin.Misc.Ecomail.Services
                 var mappings = await _categoryService.GetProductCategoriesByProductIdAsync(product.Id);
                 var category = await _categoryService.GetCategoryByIdAsync(mappings.FirstOrDefault()?.CategoryId ?? 0);
                 var seName = await _urlRecordService.GetSeNameAsync(product);
-                var url = urlHelper.RouteUrl("Product", new { SeName = seName }, _webHelper.GetCurrentRequestProtocol());
+                var url = urlHelper.RouteUrl<Product>(new { SeName = seName }, _webHelper.GetCurrentRequestProtocol());
                 var (price, _) = await _taxService.GetProductPriceAsync(product, product.Price);
 
                 return new ProductItem
@@ -937,28 +926,18 @@ namespace Nop.Plugin.Misc.Ecomail.Services
                 }
                 else if (customer is not null)
                 {
-                    var countryId = await _genericAttributeService.GetAttributeAsync<int>(customer, NopCustomerDefaults.CountryIdAttribute);
-                    var country = await _countryService.GetCountryByIdAsync(countryId);
-                    var firstName = await _genericAttributeService.GetAttributeAsync<string>(customer, NopCustomerDefaults.FirstNameAttribute);
-                    var surname = await _genericAttributeService.GetAttributeAsync<string>(customer, NopCustomerDefaults.LastNameAttribute);
-                    var company = await _genericAttributeService.GetAttributeAsync<string>(customer, NopCustomerDefaults.CompanyAttribute);
-                    var city = await _genericAttributeService.GetAttributeAsync<string>(customer, NopCustomerDefaults.CityAttribute);
-                    var street = await _genericAttributeService.GetAttributeAsync<string>(customer, NopCustomerDefaults.StreetAddressAttribute);
-                    var zip = await _genericAttributeService.GetAttributeAsync<string>(customer, NopCustomerDefaults.ZipPostalCodeAttribute);
-                    var phone = await _genericAttributeService.GetAttributeAsync<string>(customer, NopCustomerDefaults.PhoneAttribute);
-                    var birthday = await _genericAttributeService.GetAttributeAsync<string>(customer, NopCustomerDefaults.DateOfBirthAttribute);
-                    var gender = await _genericAttributeService.GetAttributeAsync<string>(customer, NopCustomerDefaults.GenderAttribute);
-                    gender = string.IsNullOrEmpty(gender) ? "" : gender.Equals("M", StringComparison.InvariantCultureIgnoreCase) ? "male" : "female";
+                    var country = await _countryService.GetCountryByIdAsync(customer.CountryId);
+                    var gender = string.IsNullOrEmpty(customer.Gender) ? "" : customer.Gender.Equals("M", StringComparison.InvariantCultureIgnoreCase) ? "male" : "female";
 
-                    subscriberData.FirstName = firstName ?? string.Empty;
-                    subscriberData.Surname = surname ?? string.Empty;
-                    subscriberData.Company = company ?? string.Empty;
-                    subscriberData.City = city ?? string.Empty;
-                    subscriberData.Street = street ?? string.Empty;
-                    subscriberData.Zip = zip ?? string.Empty;
+                    subscriberData.FirstName = customer.FirstName ?? string.Empty;
+                    subscriberData.Surname = customer.LastName ?? string.Empty;
+                    subscriberData.Company = customer.Company ?? string.Empty;
+                    subscriberData.City = customer.City ?? string.Empty;
+                    subscriberData.Street = customer.StreetAddress ?? string.Empty;
+                    subscriberData.Zip = customer.ZipPostalCode ?? string.Empty;
                     subscriberData.Country = country?.TwoLetterIsoCode ?? string.Empty;
-                    subscriberData.Phone = phone ?? string.Empty;
-                    subscriberData.Birthday = birthday ?? string.Empty;
+                    subscriberData.Phone = customer.Phone ?? string.Empty;
+                    subscriberData.Birthday = customer.DateOfBirth?.ToShortDateString() ?? string.Empty;
                     subscriberData.Gender = gender ?? string.Empty;
                 }
 
@@ -1140,7 +1119,7 @@ namespace Nop.Plugin.Misc.Ecomail.Services
                             FullDescription = product.FullDescription ?? string.Empty,
                             Sku = sku ?? string.Empty,
                             Category = category?.Name ?? string.Empty,
-                            Url = urlHelper.RouteUrl("Product", new { SeName = seName }, _webHelper.GetCurrentRequestProtocol()),
+                            Url = urlHelper.RouteUrl<Product>(new { SeName = seName }, _webHelper.GetCurrentRequestProtocol()),
                             ImgUrl = url ?? string.Empty,
                             Quantity = item.Quantity,
                             Price = itemPrice.ToString("0.00", CultureInfo.InvariantCulture)

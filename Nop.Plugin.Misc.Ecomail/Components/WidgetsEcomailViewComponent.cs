@@ -10,7 +10,6 @@ namespace Nop.Plugin.Misc.Ecomail.Components
     /// <summary>
     /// Represents view component to embed tracking script on pages
     /// </summary>
-    [ViewComponent(Name = EcomailDefaults.TRACKING_VIEW_COMPONENT_NAME)]
     public class WidgetsEcomailViewComponent : NopViewComponent
     {
         #region Fields

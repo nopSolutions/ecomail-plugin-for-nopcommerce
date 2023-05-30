@@ -77,11 +77,6 @@ namespace Nop.Plugin.Misc.Ecomail
         /// </summary>
         public static int RequestTimeout => 30;
 
-        /// <summary>
-        /// Gets a name of the view component to embed tracking script on pages
-        /// </summary>
-        public const string TRACKING_VIEW_COMPONENT_NAME = "Widget_Ecomail_Tracking";
-
         #region API URLs
 
         /// <summary>

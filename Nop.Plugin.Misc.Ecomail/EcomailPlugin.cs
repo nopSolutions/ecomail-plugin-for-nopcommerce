@@ -1,10 +1,12 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Infrastructure;
 using Microsoft.AspNetCore.Mvc.Routing;
 using Nop.Core.Domain.Cms;
 using Nop.Core.Domain.Orders;
+using Nop.Plugin.Misc.Ecomail.Components;
 using Nop.Plugin.Misc.Ecomail.Domain;
 using Nop.Services.Cms;
 using Nop.Services.Common;
@@ -62,13 +64,19 @@ namespace Nop.Plugin.Misc.Ecomail
         }
 
         /// <summary>
-        /// Gets a name of a view component for displaying widget
+        /// Gets a type of a view component for displaying widget
         /// </summary>
         /// <param name="widgetZone">Name of the widget zone</param>
-        /// <returns>View component name</returns>
-        public string GetWidgetViewComponentName(string widgetZone)
+        /// <returns>View component type</returns>
+        public Type GetWidgetViewComponent(string widgetZone)
         {
-            return EcomailDefaults.TRACKING_VIEW_COMPONENT_NAME;
+            if (widgetZone is null)
+                throw new ArgumentNullException(nameof(widgetZone));
+
+            if (widgetZone.Equals(PublicWidgetZones.BodyStartHtmlTagAfter))
+                return typeof(WidgetsEcomailViewComponent);
+
+            return null;
         }
 
         /// <summary>

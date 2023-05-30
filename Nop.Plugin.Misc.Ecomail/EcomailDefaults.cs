@@ -8,11 +8,6 @@ namespace Nop.Plugin.Misc.Ecomail
     public static class EcomailDefaults
     {
         /// <summary>
-        /// Gets a name of the view component to embed tracking script on pages
-        /// </summary>
-        public const string TRACKING_VIEW_COMPONENT_NAME = "Widget_Ecomail_Tracking";
-
-        /// <summary>
         /// Gets a plugin system name
         /// </summary>
         public static string SystemName => "Misc.Ecomail";
@@ -28,9 +23,9 @@ namespace Nop.Plugin.Misc.Ecomail
         public static string ApiKeyHeader => "key";
 
         /// <summary>
-        /// Gets a period (in seconds) before the request times out
+        /// Gets the configuration route name
         /// </summary>
-        public static int RequestTimeout => 10;
+        public static string ConfigurationRouteName => "Plugin.Misc.Ecomail.Configure";
 
         /// <summary>
         /// Gets a name of the webhook route
@@ -43,27 +38,6 @@ namespace Nop.Plugin.Misc.Ecomail
         public static string ProductFeedRoute => "Plugin.Misc.Ecomail.ProductFeed";
 
         /// <summary>
-        /// Gets the synchronization schedule task
-        /// </summary>
-        public static (string Name, string Type, int Period) SynchronizationTask =>
-            ("Synchronization (Ecomail plugin)", "Nop.Plugin.Misc.Ecomail.Services.SynchronizationTask", 24);
-
-        /// <summary>
-        /// Gets a name of attribute to store a store identifier
-        /// </summary>
-        public static string SubscriberStoreIdAttribute => "SHOP_ID";
-
-        /// <summary>
-        /// Gets a name of attribute to store a store name
-        /// </summary>
-        public static string SubscriberStoreNameAttribute => "SHOP_NAME";
-
-        /// <summary>
-        /// Gets a name of attribute to store a store url
-        /// </summary>
-        public static string SubscriberStoreUrlAttribute => "SHOP_URL";
-
-        /// <summary>
         /// Gets a key of the attribute to store shopping cart identifier
         /// </summary>
         public static string ShoppingCartGuidAttribute => $"{SystemName}.ShoppingCart.Guid";
@@ -74,14 +48,9 @@ namespace Nop.Plugin.Misc.Ecomail
         public static string BasketActionAttribute => "Basket";
 
         /// <summary>
-        /// Gets a name of the cart updated event
+        /// Gets a key of the attribute to store customer email identifier
         /// </summary>
-        public static string CartUpdatedEventName => "ECOMAIL_CART_UPDATED";
-
-        /// <summary>
-        /// Gets a name of the cart deleted event
-        /// </summary>
-        public static string CartDeletedEventName => "ECOMAIL_CART_DELETED";
+        public static string CustomerEcomailIdAttribute => $"{SystemName}.Customer.EcomailId";
 
         /// <summary>
         /// Gets a token to place app identifier in the tracking script
@@ -89,14 +58,9 @@ namespace Nop.Plugin.Misc.Ecomail
         public static string TrackingScriptAppId => "{AppId}";
 
         /// <summary>
-        /// Gets a generic attribute name to hide general settings block on the plugin configuration page
+        /// Gets a custom field to mark a contact as newsletter subscriber
         /// </summary>
-        public static string HideGeneralBlock => $"{SystemName}.Page.HideGeneralBlock";
-
-        /// <summary>
-        /// Gets a generic attribute name to hide synchronization block on the plugin configuration page
-        /// </summary>
-        public static string HideSynchronizationBlock => $"{SystemName}.Page.HideSynchronizationBlock";
+        public static (string Name, string Value) SubscriberCustomField => ("IsSubscribed", "YES");
 
         /// <summary>
         /// Gets the name of the product feeds directory
@@ -106,57 +70,74 @@ namespace Nop.Plugin.Misc.Ecomail
         /// <summary>
         /// Gets a product feed filename
         /// </summary>
-        /// <remarks>
-        /// {0} : store Id
-        /// </remarks>
-        public static string FeedFileName => "product-feed-{0}.xml";
+        public static string FeedFileName => "product-feed.xml";
+
+        /// <summary>
+        /// Gets a period (in seconds) before the request times out
+        /// </summary>
+        public static int RequestTimeout => 30;
+
+        /// <summary>
+        /// Gets a name of the view component to embed tracking script on pages
+        /// </summary>
+        public const string TRACKING_VIEW_COMPONENT_NAME = "Widget_Ecomail_Tracking";
 
         #region API URLs
 
         /// <summary>
         /// Gets a base API URL
         /// </summary>
-        public static string EcomailApiBaseUrl => "http://api2.ecomailapp.com";
+        public static string BaseApiUrl => "http://api2.ecomailapp.com";
 
         /// <summary>
         /// Gets a URL to add transaction data to account
         /// </summary>
-        public static string AddTransactionDataToEcomailApiUrl => EcomailApiBaseUrl + "/tracker/transaction";
+        public static string AddTransactionDataApiUrl => BaseApiUrl + "/tracker/transaction";
 
         /// <summary>
-        /// Gets a URL to get contact lists
+        /// Gets a URL to add transactions to account
         /// </summary>
-        public static string EcomailContactListApiUrl => EcomailApiBaseUrl + "/lists";
-
-        /// <summary>
-        /// Gets a URL to get contacts
-        /// </summary>
-        public static string GetContactListByIdApiUrl => EcomailApiBaseUrl + "/lists/{0}";
-
-        /// <summary>
-        /// Gets a URL to import contacts (subscribers) on bulk to account
-        /// </summary>
-        public static string SubscribeInBulkApiUrl => EcomailApiBaseUrl + "/lists/{0}/subscribe-bulk";
-
-        /// <summary>
-        /// Gets a URL to import contact (subscriber) on account
-        /// </summary>
-        public static string SubscribeToEcomailApiUrl => EcomailApiBaseUrl + "/lists/{0}/subscribe";
-
-        /// <summary>
-        /// Gets a URL to import contacts (subscribers) on account
-        /// </summary>
-        public static string SubscribeListOfEcomailApiUrl => EcomailApiBaseUrl + "/lists/{0}/subscribers";
-
-        /// <summary>
-        /// Gets a URL to unsubscriber from account
-        /// </summary>
-        public static string UnubscribeFromListEcomailApiUrl => EcomailApiBaseUrl + "/lists/{0}/unsubscribe";
+        public static string AddTransactionsApiUrl => BaseApiUrl + "/tracker/transaction-bulk";
 
         /// <summary>
         /// Gets a URL to track events
         /// </summary>
-        public static string EcomailTrackEventApiUrl => EcomailApiBaseUrl + "/tracker/events";
+        public static string TrackEventApiUrl => BaseApiUrl + "/tracker/events";
+
+        /// <summary>
+        /// Gets a URL to get contact lists
+        /// </summary>
+        public static string ListsApiUrl => BaseApiUrl + "/lists";
+
+        /// <summary>
+        /// Gets a URL to get contacts
+        /// </summary>
+        public static string GetListApiUrl => BaseApiUrl + "/lists/{0}";
+
+        /// <summary>
+        /// Gets a URL to import contacts (subscribers) on bulk to account
+        /// </summary>
+        public static string SubscribeInBulkApiUrl => BaseApiUrl + "/lists/{0}/subscribe-bulk";
+
+        /// <summary>
+        /// Gets a URL to import contact (subscriber) on account
+        /// </summary>
+        public static string SubscribeApiUrl => BaseApiUrl + "/lists/{0}/subscribe";
+
+        /// <summary>
+        /// Gets a URL to unsubscriber from account
+        /// </summary>
+        public static string UnubscribeApiUrl => BaseApiUrl + "/lists/{0}/unsubscribe";
+
+        /// <summary>
+        /// Gets a URL to import contacts (subscribers) on account
+        /// </summary>
+        public static string GetSubscribersApiUrl => BaseApiUrl + "/lists/{0}/subscribers";
+
+        /// <summary>
+        /// Gets a URL to get single contact (subscriber) on account
+        /// </summary>
+        public static string GetSubscriberApiUrl => BaseApiUrl + "/subscribers/{0}";
 
         #endregion
     }

@@ -1,4 +1,6 @@
-﻿using Nop.Core.Configuration;
+﻿using System.Collections.Generic;
+using Nop.Core.Configuration;
+using Nop.Plugin.Misc.Ecomail.Domain;
 
 namespace Nop.Plugin.Misc.Ecomail
 {
@@ -33,11 +35,36 @@ namespace Nop.Plugin.Misc.Ecomail
         public int ListId { get; set; }
 
         /// <summary>
+        /// Gets or sets a value indicating whether to sync opted-in for the newsletter only
+        /// </summary>
+        public bool SyncSubscribersOnly { get; set; }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether to import orders from the store to the account during synchronization
+        /// </summary>
+        public bool ImportOrdersOnSync { get; set; }
+
+        /// <summary>
+        /// Gets or sets a list of order statuses to sync customers
+        /// </summary>
+        public List<int> OrderStatuses { get; set; } = new();
+
+        /// <summary>
+        /// Gets or sets a type of order event at which a transaction request should be sent
+        /// </summary>
+        public OrderEventType OrderEventType { get; set; }
+
+        /// <summary>
         /// Gets or sets the identifier of GDPR newsletter consent
         /// </summary>
         public int ConsentId { get; set; }
 
         #region Advanced
+
+        /// <summary>
+        /// Gets or sets a value indicating whether to log request/response details for debug purposes
+        /// </summary>
+        public bool LogRequests { get; set; }
 
         /// <summary>
         /// Gets or sets a period (in seconds) before the request times out

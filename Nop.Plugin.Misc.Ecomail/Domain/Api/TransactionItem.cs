@@ -1,6 +1,6 @@
 ﻿using Newtonsoft.Json;
 
-namespace Nop.Plugin.Misc.Ecomail.Domains.Api
+namespace Nop.Plugin.Misc.Ecomail.Domain.Api
 {
     public class TransactionItem
     {
@@ -14,7 +14,7 @@ namespace Nop.Plugin.Misc.Ecomail.Domains.Api
         public string Category { get; set; }
 
         [JsonProperty("price")]
-        public decimal Price { get; set; }
+        public string Price { get; set; }
 
         [JsonProperty("amount")]
         public int Quantity { get; set; }

@@ -2,6 +2,7 @@
 using Nop.Core.Domain.Messages;
 using Nop.Core.Domain.Orders;
 using Nop.Core.Events;
+using Nop.Plugin.Misc.Ecomail.Domain;
 using Nop.Services.Events;
 
 namespace Nop.Plugin.Misc.Ecomail.Services
@@ -15,7 +16,8 @@ namespace Nop.Plugin.Misc.Ecomail.Services
         IConsumer<EntityInsertedEvent<ShoppingCartItem>>,
         IConsumer<EntityUpdatedEvent<ShoppingCartItem>>,
         IConsumer<EntityDeletedEvent<ShoppingCartItem>>,
-        IConsumer<OrderPlacedEvent>
+        IConsumer<OrderPlacedEvent>,
+        IConsumer<OrderPaidEvent>
     {
         #region Fields
 
@@ -62,7 +64,7 @@ namespace Nop.Plugin.Misc.Ecomail.Services
         public async Task HandleEventAsync(EntityInsertedEvent<ShoppingCartItem> eventMessage)
         {
             if (eventMessage.Entity.ShoppingCartType == ShoppingCartType.ShoppingCart)
-                await _ecomailService.HandleShoppingCartChangedEventAsync(eventMessage.Entity);
+                await _ecomailService.HandleShoppingCartEventAsync(eventMessage.Entity);
         }
 
         /// <summary>
@@ -73,7 +75,7 @@ namespace Nop.Plugin.Misc.Ecomail.Services
         public async Task HandleEventAsync(EntityUpdatedEvent<ShoppingCartItem> eventMessage)
         {
             if (eventMessage.Entity.ShoppingCartType == ShoppingCartType.ShoppingCart)
-                await _ecomailService.HandleShoppingCartChangedEventAsync(eventMessage.Entity);
+                await _ecomailService.HandleShoppingCartEventAsync(eventMessage.Entity);
         }
 
         /// <summary>
@@ -84,7 +86,7 @@ namespace Nop.Plugin.Misc.Ecomail.Services
         public async Task HandleEventAsync(EntityDeletedEvent<ShoppingCartItem> eventMessage)
         {
             if (eventMessage.Entity.ShoppingCartType == ShoppingCartType.ShoppingCart)
-                await _ecomailService.HandleShoppingCartChangedEventAsync(eventMessage.Entity);
+                await _ecomailService.HandleShoppingCartEventAsync(eventMessage.Entity);
         }
 
         /// <summary>
@@ -94,7 +96,17 @@ namespace Nop.Plugin.Misc.Ecomail.Services
         /// <returns>A task that represents the asynchronous operation</returns>
         public async Task HandleEventAsync(OrderPlacedEvent eventMessage)
         {
-            await _ecomailService.HandleOrderPlacedEventAsync(eventMessage.Order);
+            await _ecomailService.HandleOrderEventAsync(eventMessage.Order, OrderEventType.Placed);
+        }
+
+        /// <summary>
+        /// Handle the order paid event
+        /// </summary>
+        /// <param name="eventMessage">The event message</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public async Task HandleEventAsync(OrderPaidEvent eventMessage)
+        {
+            await _ecomailService.HandleOrderEventAsync(eventMessage.Order, OrderEventType.Paid);
         }
 
         #endregion

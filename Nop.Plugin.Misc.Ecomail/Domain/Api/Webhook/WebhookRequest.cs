@@ -1,6 +1,6 @@
 ﻿using Newtonsoft.Json;
 
-namespace Nop.Plugin.Misc.Ecomail.Domains.Api.Webhook
+namespace Nop.Plugin.Misc.Ecomail.Domain.Api.Webhook
 {
     public class WebhookRequest
     {

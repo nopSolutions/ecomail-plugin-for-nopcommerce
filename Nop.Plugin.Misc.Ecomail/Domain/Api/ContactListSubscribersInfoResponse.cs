@@ -1,6 +1,6 @@
 ﻿using Newtonsoft.Json;
 
-namespace Nop.Plugin.Misc.Ecomail.Domains.Api
+namespace Nop.Plugin.Misc.Ecomail.Domain.Api
 {
     public class ContactListSubscribersInfoResponse
     {

@@ -1,14 +1,16 @@
 ﻿using System.Collections.Generic;
 using System.Threading.Tasks;
-using Nop.Core;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Infrastructure;
+using Microsoft.AspNetCore.Mvc.Routing;
 using Nop.Core.Domain.Cms;
-using Nop.Core.Domain.ScheduleTasks;
+using Nop.Core.Domain.Orders;
+using Nop.Plugin.Misc.Ecomail.Domain;
 using Nop.Services.Cms;
 using Nop.Services.Common;
 using Nop.Services.Configuration;
 using Nop.Services.Localization;
 using Nop.Services.Plugins;
-using Nop.Services.ScheduleTasks;
 using Nop.Web.Framework.Infrastructure;
 
 namespace Nop.Plugin.Misc.Ecomail
@@ -20,26 +22,26 @@ namespace Nop.Plugin.Misc.Ecomail
     {
         #region Fields
 
+        private readonly IActionContextAccessor _actionContextAccessor;
         private readonly ILocalizationService _localizationService;
-        private readonly IScheduleTaskService _scheduleTaskService;
         private readonly ISettingService _settingService;
-        private readonly IWebHelper _webHelper;
+        private readonly IUrlHelperFactory _urlHelperFactory;
         private readonly WidgetSettings _widgetSettings;
 
         #endregion
 
         #region Ctor
 
-        public EcomailPlugin(ILocalizationService localizationService,
-            IScheduleTaskService scheduleTaskService,
+        public EcomailPlugin(IActionContextAccessor actionContextAccessor,
+            ILocalizationService localizationService,
             ISettingService settingService,
-            IWebHelper webHelper,
+            IUrlHelperFactory urlHelperFactory,
             WidgetSettings widgetSettings)
         {
+            _actionContextAccessor = actionContextAccessor;
             _localizationService = localizationService;
-            _scheduleTaskService = scheduleTaskService;
             _settingService = settingService;
-            _webHelper = webHelper;
+            _urlHelperFactory = urlHelperFactory;
             _widgetSettings = widgetSettings;
         }
 
@@ -74,7 +76,8 @@ namespace Nop.Plugin.Misc.Ecomail
         /// </summary>
         public override string GetConfigurationPageUrl()
         {
-            return $"{_webHelper.GetStoreLocation()}Admin/EcomailAdmin/Configure";
+            return _urlHelperFactory.GetUrlHelper(_actionContextAccessor.ActionContext)
+                .RouteUrl(EcomailDefaults.ConfigurationRouteName);
         }
 
         /// <summary>
@@ -97,10 +100,18 @@ namespace Nop.Plugin.Misc.Ecomail
 
             var settings = new EcomailSettings
             {
+                UseTracking = true,
                 TrackingScript = ecomailTrackingScript,
-                RequestTimeout = EcomailDefaults.RequestTimeout,
-                SyncPageSize = 500,
-                RebuildFeedXmlAfterHours = 48
+                SyncSubscribersOnly = true,
+                ExportContactsOnSync = false,
+                ImportOrdersOnSync = false,
+                LogRequests = false,
+                LogTrackingErrors = false,
+                SyncPageSize = 300,
+                RebuildFeedXmlAfterHours = 48,
+                OrderStatuses = new() { (int)OrderStatus.Complete },
+                OrderEventType = OrderEventType.Placed,
+                RequestTimeout = EcomailDefaults.RequestTimeout
             };
 
             await _settingService.SaveSettingAsync(settings);
@@ -109,17 +120,6 @@ namespace Nop.Plugin.Misc.Ecomail
             {
                 _widgetSettings.ActiveWidgetSystemNames.Add(EcomailDefaults.SystemName);
                 await _settingService.SaveSettingAsync(_widgetSettings);
-            }
-
-            //install synchronization task
-            if (await _scheduleTaskService.GetTaskByTypeAsync(EcomailDefaults.SynchronizationTask.Type) is null)
-            {
-                await _scheduleTaskService.InsertTaskAsync(new ScheduleTask
-                {
-                    Seconds = EcomailDefaults.SynchronizationTask.Period * 60 * 60,
-                    Name = EcomailDefaults.SynchronizationTask.Name,
-                    Type = EcomailDefaults.SynchronizationTask.Type
-                });
             }
 
             await _localizationService.AddOrUpdateLocaleResourceAsync(new Dictionary<string, string>
@@ -138,9 +138,17 @@ namespace Nop.Plugin.Misc.Ecomail
                 ["Plugins.Misc.Ecomail.Fields.AppId.Hint"] = "Enter the identifier (name) of your account. This name is the same as the beginning of your account address. So, for example, the account 'foo.ecomailapp.cz' will have the name 'foo'.",
                 ["Plugins.Misc.Ecomail.Fields.AppId.Required"] = "App ID is required",
                 ["Plugins.Misc.Ecomail.Fields.List"] = "Contact list",
-                ["Plugins.Misc.Ecomail.Fields.List.Hint"] = "Select the Ecomail list to synchronize nopCommerce newsletter subscribers.",
+                ["Plugins.Misc.Ecomail.Fields.List.Hint"] = "Select the Ecomail list to synchronize subscribers/customers from your store.",
+                ["Plugins.Misc.Ecomail.Fields.SyncSubscribersOnly"] = "Synchronize subscribers only",
+                ["Plugins.Misc.Ecomail.Fields.SyncSubscribersOnly.Hint"] = "Determine whether to synchronize only the contacts who have opted-in for the newsletter. When disabled, all customers who made an order in the store will also be synchronized.",
+                ["Plugins.Misc.Ecomail.Fields.ImportOrdersOnSync"] = "Synchronize orders",
+                ["Plugins.Misc.Ecomail.Fields.ImportOrdersOnSync.Hint"] = "Determine whether to import orders from the store to Ecomail account during synchronization and in real time.",
+                ["Plugins.Misc.Ecomail.Fields.OrderStatuses"] = "Order statuses",
+                ["Plugins.Misc.Ecomail.Fields.OrderStatuses.Hint"] = "Specify statuses of orders to import during synchronization.",
+                ["Plugins.Misc.Ecomail.Fields.OrderEventType"] = "Order event type",
+                ["Plugins.Misc.Ecomail.Fields.OrderEventType.Hint"] = "Specify the type of order event at which to import the order in real time.",
                 ["Plugins.Misc.Ecomail.Fields.Consent"] = "GDPR Consent",
-                ["Plugins.Misc.Ecomail.Fields.Consent.Hint"] = "Select GDPR consent that the customer must accept in order to subscribe to the newsletter. Leave it blank to sync contacts anyway.",
+                ["Plugins.Misc.Ecomail.Fields.Consent.Hint"] = "Select GDPR consent that the subscriber must accept in order to subscribe to the newsletter. Leave it blank to sync contacts anyway.",
 
                 ["Plugins.Misc.Ecomail.Fields.List.New"] = "Create new list",
                 ["Plugins.Misc.Ecomail.Fields.List.New.Add"] = "Add new list",
@@ -179,10 +187,6 @@ namespace Nop.Plugin.Misc.Ecomail
                 await _settingService.SaveSettingAsync(_widgetSettings);
             }
             await _settingService.DeleteSettingAsync<EcomailSettings>();
-
-            var task = await _scheduleTaskService.GetTaskByTypeAsync(EcomailDefaults.SynchronizationTask.Type);
-            if (task is not null)
-                await _scheduleTaskService.DeleteTaskAsync(task);
 
             await _localizationService.DeleteLocaleResourcesAsync("Plugins.Misc.Ecomail");
 

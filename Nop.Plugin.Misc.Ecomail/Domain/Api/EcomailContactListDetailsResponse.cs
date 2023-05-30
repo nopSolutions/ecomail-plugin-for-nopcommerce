@@ -1,6 +1,6 @@
 ﻿using Newtonsoft.Json;
 
-namespace Nop.Plugin.Misc.Ecomail.Domains.Api
+namespace Nop.Plugin.Misc.Ecomail.Domain.Api
 {
     public class EcomailContactListDetailsResponse
     {
@@ -18,7 +18,7 @@ namespace Nop.Plugin.Misc.Ecomail.Domains.Api
         public long Id { get; set; }
 
         [JsonProperty("brand_id")]
-        public object BrandId { get; set; }
+        public string BrandId { get; set; }
 
         [JsonProperty("name")]
         public string Name { get; set; }

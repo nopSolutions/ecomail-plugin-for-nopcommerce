@@ -21,6 +21,7 @@ namespace Nop.Plugin.Misc.Ecomail.Infrastructure
         {
             services.AddHttpClient<EcomailHttpClient>().WithProxy();
             services.AddScoped<EcomailService>();
+            services.AddScoped<EcomailOrderService>();
         }
 
         /// <summary>

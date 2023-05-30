@@ -1,4 +1,4 @@
-﻿namespace Nop.Plugin.Misc.Ecomail.Domains
+﻿namespace Nop.Plugin.Misc.Ecomail.Domain
 {
     /// <summary>
     /// Represents contact status enumeration

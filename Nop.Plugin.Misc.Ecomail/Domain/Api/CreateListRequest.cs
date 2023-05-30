@@ -1,12 +1,9 @@
 ﻿using Newtonsoft.Json;
 
-namespace Nop.Plugin.Misc.Ecomail.Domains.Api
+namespace Nop.Plugin.Misc.Ecomail.Domain.Api
 {
-    public class ContactListResponse
+    public class CreateListRequest
     {
-        [JsonProperty("id")]
-        public int Id { get; set; }
-
         [JsonProperty("name")]
         public string ListName { get; set; }
 
@@ -18,8 +15,5 @@ namespace Nop.Plugin.Misc.Ecomail.Domains.Api
 
         [JsonProperty("reply_to")]
         public string ReplyTo { get; set; }
-
-        [JsonProperty("errors")]
-        public string Errors { get; set; }
     }
 }

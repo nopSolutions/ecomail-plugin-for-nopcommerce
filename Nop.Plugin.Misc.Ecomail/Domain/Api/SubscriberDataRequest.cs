@@ -1,13 +1,13 @@
 ﻿using System.Collections.Generic;
 using Newtonsoft.Json;
 
-namespace Nop.Plugin.Misc.Ecomail.Domains.Api
+namespace Nop.Plugin.Misc.Ecomail.Domain.Api
 {
     public class SubscriberDataRequest
     {
         public SubscriberDataRequest()
         {
-            CustomFields = new Dictionary<string, CustomFieldsInfo>();
+            CustomFields = new Dictionary<string, string>();
         }
 
         [JsonProperty("name")]
@@ -55,25 +55,7 @@ namespace Nop.Plugin.Misc.Ecomail.Domains.Api
         [JsonProperty("birthday")]
         public string Birthday { get; set; }
 
-        [JsonProperty("tags")]
-        public string[] Tags { get; set; }
-
         [JsonProperty("custom_fields")]
-        public Dictionary<string, CustomFieldsInfo> CustomFields { get; set; }
-    }
-
-    public class CustomFieldsInfo
-    {
-        public CustomFieldsInfo(string value, string valueType)
-        {
-            ValueType = valueType;
-            Value = value;
-        }
-
-        [JsonProperty("value")]
-        public string Value { get; set; }
-
-        [JsonProperty("type")]
-        public string ValueType { get; set; }
+        public Dictionary<string, string> CustomFields { get; set; }
     }
 }

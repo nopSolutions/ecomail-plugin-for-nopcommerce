@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Routing;
+using Nop.Web.Framework;
 using Nop.Web.Framework.Mvc.Routing;
 
 namespace Nop.Plugin.Misc.Ecomail.Infrastructure
@@ -15,6 +16,10 @@ namespace Nop.Plugin.Misc.Ecomail.Infrastructure
         /// <param name="endpointRouteBuilder">Route builder</param>
         public void RegisterRoutes(IEndpointRouteBuilder endpointRouteBuilder)
         {
+            endpointRouteBuilder.MapControllerRoute(name: EcomailDefaults.ConfigurationRouteName,
+                pattern: "Admin/EcomailAdmin/Configure",
+                defaults: new { controller = "EcomailAdmin", action = "Configure", area = AreaNames.Admin });
+
             endpointRouteBuilder.MapControllerRoute(name: EcomailDefaults.WebhookRoute,
                 pattern: "Plugins/Ecomail/Webhook",
                 defaults: new { controller = "Ecomail", action = "Webhook" });

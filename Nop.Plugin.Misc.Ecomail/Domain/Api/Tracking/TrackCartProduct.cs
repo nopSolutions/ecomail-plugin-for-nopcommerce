@@ -1,11 +1,11 @@
 ﻿using Newtonsoft.Json;
 
-namespace Nop.Plugin.Misc.Ecomail.Domains.Api.Tracking
+namespace Nop.Plugin.Misc.Ecomail.Domain.Api.Tracking
 {
     public class TrackCartProduct
     {
         [JsonProperty("productId")]
-        public int ProductId { get; set; }
+        public string ProductId { get; set; }
 
         [JsonProperty("sku")]
         public string Sku { get; set; }
@@ -23,10 +23,10 @@ namespace Nop.Plugin.Misc.Ecomail.Domains.Api.Tracking
         public string Name { get; set; }
 
         [JsonProperty("price")]
-        public decimal Price { get; set; }
+        public string Price { get; set; }
 
         [JsonProperty("quantity")]
-        public decimal Quantity { get; set; }
+        public int Quantity { get; set; }
 
         [JsonProperty("description")]
         public string Description { get; set; }

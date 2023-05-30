@@ -21,13 +21,12 @@ using Nop.Core.Domain.Messages;
 using Nop.Core.Domain.Orders;
 using Nop.Core.Infrastructure;
 using Nop.Data;
-using Nop.Plugin.Misc.Ecomail.Domains;
-using Nop.Plugin.Misc.Ecomail.Domains.Api;
-using Nop.Plugin.Misc.Ecomail.Domains.Api.Tracking;
-using Nop.Plugin.Misc.Ecomail.Domains.Api.Webhook;
+using Nop.Plugin.Misc.Ecomail.Domain;
+using Nop.Plugin.Misc.Ecomail.Domain.Api;
+using Nop.Plugin.Misc.Ecomail.Domain.Api.Tracking;
+using Nop.Plugin.Misc.Ecomail.Domain.Api.Webhook;
 using Nop.Services.Catalog;
 using Nop.Services.Common;
-using Nop.Services.Configuration;
 using Nop.Services.Customers;
 using Nop.Services.Directory;
 using Nop.Services.Gdpr;
@@ -50,6 +49,7 @@ namespace Nop.Plugin.Misc.Ecomail.Services
 
         private readonly CurrencySettings _currencySettings;
         private readonly EcomailHttpClient _ecomailHttpClient;
+        private readonly EcomailOrderService _ecomailOrderService;
         private readonly EcomailSettings _ecomailSettings;
         private readonly IActionContextAccessor _actionContextAccessor;
         private readonly IAddressService _addressService;
@@ -66,11 +66,13 @@ namespace Nop.Plugin.Misc.Ecomail.Services
         private readonly IOrderTotalCalculationService _orderTotalCalculationService;
         private readonly IPictureService _pictureService;
         private readonly IProductService _productService;
+        private readonly IRepository<Address> _addressRepository;
         private readonly IRepository<Country> _countryRepository;
         private readonly IRepository<Customer> _customerRepository;
         private readonly IRepository<GenericAttribute> _genericAttributeRepository;
         private readonly IRepository<NewsLetterSubscription> _newsLetterSubscriptionRepository;
-        private readonly ISettingService _settingService;
+        private readonly IRepository<Order> _orderRepository;
+        private readonly IRepository<OrderItem> _orderItemRepository;
         private readonly IShoppingCartService _shoppingCartService;
         private readonly IStoreContext _storeContext;
         private readonly IStoreService _storeService;
@@ -86,6 +88,7 @@ namespace Nop.Plugin.Misc.Ecomail.Services
 
         public EcomailService(CurrencySettings currencySettings,
             EcomailHttpClient ecomailHttpClient,
+            EcomailOrderService ecomailOrderService,
             EcomailSettings ecomailSettings,
             IActionContextAccessor actionContextAccessor,
             IAddressService addressService,
@@ -102,11 +105,13 @@ namespace Nop.Plugin.Misc.Ecomail.Services
             IOrderTotalCalculationService orderTotalCalculationService,
             IPictureService pictureService,
             IProductService productService,
+            IRepository<Address> addressRepository,
             IRepository<Country> countryRepository,
             IRepository<Customer> customerRepository,
             IRepository<GenericAttribute> genericAttributeRepository,
             IRepository<NewsLetterSubscription> newsLetterSubscriptionRepository,
-            ISettingService settingService,
+            IRepository<Order> orderRepository,
+            IRepository<OrderItem> orderItemRepository,
             IShoppingCartService shoppingCartService,
             IStoreContext storeContext,
             IStoreService storeService,
@@ -118,6 +123,7 @@ namespace Nop.Plugin.Misc.Ecomail.Services
         {
             _currencySettings = currencySettings;
             _ecomailHttpClient = ecomailHttpClient;
+            _ecomailOrderService = ecomailOrderService;
             _ecomailSettings = ecomailSettings;
             _actionContextAccessor = actionContextAccessor;
             _addressService = addressService;
@@ -134,11 +140,13 @@ namespace Nop.Plugin.Misc.Ecomail.Services
             _orderTotalCalculationService = orderTotalCalculationService;
             _pictureService = pictureService;
             _productService = productService;
+            _addressRepository = addressRepository;
             _countryRepository = countryRepository;
             _customerRepository = customerRepository;
             _genericAttributeRepository = genericAttributeRepository;
             _newsLetterSubscriptionRepository = newsLetterSubscriptionRepository;
-            _settingService = settingService;
+            _orderRepository = orderRepository;
+            _orderItemRepository = orderItemRepository;
             _shoppingCartService = shoppingCartService;
             _storeContext = storeContext;
             _storeService = storeService;
@@ -151,7 +159,7 @@ namespace Nop.Plugin.Misc.Ecomail.Services
 
         #endregion
 
-        #region Utilites
+        #region Utilities
 
         /// <summary>
         /// Handle function and get result
@@ -186,12 +194,11 @@ namespace Nop.Plugin.Misc.Ecomail.Services
         /// Get specific contact list 
         /// </summary>
         /// <param name="listId">Contact list id</param>
-        /// <param name="apiKey">API key</param>
         /// <returns>
         /// A task that represents the asynchronous operation
         /// The task result contains a contact list
         /// </returns>
-        private async Task<EcomailContactListDetailsResponse> GetListByIdAsync(int listId, string apiKey)
+        private async Task<EcomailContactListDetailsResponse> GetListByIdAsync(int listId)
         {
             if (listId < 1)
                 return null;
@@ -199,7 +206,7 @@ namespace Nop.Plugin.Misc.Ecomail.Services
             try
             {
                 var response = await _ecomailHttpClient
-                    .RequestAsync(string.Format(EcomailDefaults.GetContactListByIdApiUrl, listId), null, HttpMethod.Get, apiKey);
+                    .RequestAsync(string.Format(EcomailDefaults.GetListApiUrl, listId), null, HttpMethod.Get);
                 var contactListDetails = JsonConvert.DeserializeObject<EcomailContactListDetailsResponse>(response);
                 return contactListDetails;
             }
@@ -210,304 +217,502 @@ namespace Nop.Plugin.Misc.Ecomail.Services
         }
 
         /// <summary>
-        /// Import all contacts from the stores to account
+        /// Import all contacts from the store to Ecomail account
         /// </summary>
-        /// <param name="storeIds">List of store ids</param>
         /// <returns>
         /// A task that represents the asynchronous operation
         /// The task result contains the list of sync messages
         /// </returns>
-        private async Task<List<(NotifyType Type, string Message)>> ImportContactsAsync(List<int> storeIds)
+        private async Task<List<(NotifyType Type, string Message)>> ImportContactsAsync()
         {
             var messages = new List<(NotifyType, string)>();
-            foreach (var storeId in storeIds)
+            var importedContacts = 0;
+            try
             {
-                var contacts = 0;
-                try
+                if (string.IsNullOrEmpty(_ecomailSettings.ApiKey))
+                    throw new NopException("Plugin not configured");
+
+                //ensure list exists
+                var list = await GetListByIdAsync(_ecomailSettings.ListId)
+                    ?? throw new NopException("Contact list to synchronize not set");
+
+                var store = await _storeContext.GetCurrentStoreAsync();
+
+                //first sync a single contact to create custom fields
+                var subscription = (await _newsLetterSubscriptionService
+                    .GetAllNewsLetterSubscriptionsAsync(storeId: store.Id, isActive: true, pageSize: 1))
+                    .FirstOrDefault();
+                await SubscribeContactAsync(subscription);
+
+                var pageIndex = 0;
+                var pageSize = _ecomailSettings.SyncPageSize;
+                while (true)
                 {
-                    var apiKeyKey = $"{nameof(EcomailSettings)}.{nameof(EcomailSettings.ApiKey)}";
-                    var apiKey = await _settingService.GetSettingByKeyAsync<string>(apiKeyKey, storeId: storeId);
-                    if (string.IsNullOrEmpty(apiKey) && storeId > 0)
-                        apiKey = await _settingService.GetSettingByKeyAsync<string>(apiKeyKey);
-                    if (string.IsNullOrEmpty(apiKey))
-                        throw new NopException("Plugin not configured");
-
-                    //get list identifier from the settings
-                    var listKey = $"{nameof(EcomailSettings)}.{nameof(EcomailSettings.ListId)}";
-                    var listId = await _settingService.GetSettingByKeyAsync<int>(listKey, storeId: storeId);
-                    if (listId == 0)
-                        listId = await _settingService.GetSettingByKeyAsync<int>(listKey);
-                    if (listId == 0)
-                        throw new NopException("Contact list to synchronize not set");
-
-                    //ensure list exists
-                    var list = await GetListByIdAsync(listId, apiKey);
-
-                    var store = storeId > 0
-                        ? await _storeService.GetStoreByIdAsync(storeId)
-                        : await _storeContext.GetCurrentStoreAsync();
-
-                    var attributeNames = new[]
+                    var subscribers = await PrepareSubscribersAsync(store.Id, pageIndex, pageSize);
+                    if (!_ecomailSettings.SyncSubscribersOnly)
                     {
-                        NopCustomerDefaults.FirstNameAttribute,
-                        NopCustomerDefaults.LastNameAttribute,
-                        NopCustomerDefaults.CountryIdAttribute,
-                        NopCustomerDefaults.CompanyAttribute,
-                        NopCustomerDefaults.CityAttribute,
-                        NopCustomerDefaults.StreetAddressAttribute,
-                        NopCustomerDefaults.ZipPostalCodeAttribute,
-                        NopCustomerDefaults.PhoneAttribute,
-                        NopCustomerDefaults.DateOfBirthAttribute,
-                        NopCustomerDefaults.GenderAttribute
+                        var customers = PrepareCustomers(store.Id, pageIndex, pageSize)
+                            .Where(customer => !subscribers.Any(subscriber => subscriber.Email == customer.Email))
+                            .ToList();
+                        subscribers.AddRange(customers);
+                    }
+                    if (!subscribers.Any())
+                        break;
+
+                    var subscribersAddOnBulkRequest = new SubscribersAddOnBulkRequest
+                    {
+                        SubscriberDataList = subscribers,
+                        UpdateExisting = true
                     };
 
-                    var pageIndex = 0;
-                    var pageSize = _ecomailSettings.SyncPageSize;
-                    while (true)
+                    var payload = JsonConvert.SerializeObject(subscribersAddOnBulkRequest);
+                    try
                     {
-                        //try to get store subscriptions
-                        var subscriptions = await _newsLetterSubscriptionService
-                            .GetAllNewsLetterSubscriptionsAsync(storeId: store.Id, isActive: true, pageIndex: pageIndex, pageSize: pageSize);
-                        if (!subscriptions.Any())
-                            break;
+                        var response = await _ecomailHttpClient
+                            .RequestAsync(string.Format(EcomailDefaults.SubscribeInBulkApiUrl, _ecomailSettings.ListId), payload, HttpMethod.Post);
+                    }
+                    catch (Exception ex)
+                    {
+                        throw new NopException($"Failed to import contacts to list #{_ecomailSettings.ListId}. {ex.Message}");
+                    }
 
-                        var contactValues = _newsLetterSubscriptionRepository.Table
-                            .Where(subscription => subscription.Active)
-                            .OrderBy(subscription => subscription.Email)
-                            .Skip(pageIndex * pageSize)
-                            .Take(pageSize)
-                            .Join(_customerRepository.Table.Where(customer => customer.Active && !customer.Deleted),
-                                subscription => subscription.Email,
-                                customer => customer.Email,
-                                (subscription, customer) => customer)
-                            .Join(_genericAttributeRepository.Table.Where(attribute => attribute.KeyGroup == nameof(Customer) && attributeNames.Contains(attribute.Key)),
-                                customer => customer.Id,
-                                attribute => attribute.EntityId,
-                                (customer, attribute) => new { Customer = customer, Name = attribute.Key, Value = attribute.Value })
-                            .SelectMany(customerAttribute => _countryRepository.Table
-                                .Where(country => customerAttribute.Name == NopCustomerDefaults.CountryIdAttribute && country.Id.ToString() == customerAttribute.Value)
-                                .DefaultIfEmpty(),
-                                (customerAttribute, country) => new
-                                {
-                                    Id = customerAttribute.Customer.Id,
-                                    Email = customerAttribute.Customer.Email,
-                                    Name = customerAttribute.Name,
-                                    Value = customerAttribute.Name == NopCustomerDefaults.CountryIdAttribute ? country.Name : customerAttribute.Value
-                                })
-                            .GroupBy(customerAttribute => customerAttribute.Email)
-                            .Select(customerAttributes => new
-                            {
-                                Email = customerAttributes.Key,
-                                Id = customerAttributes.FirstOrDefault().Id,
-                                FirstName = customerAttributes.FirstOrDefault(item => item.Name == NopCustomerDefaults.FirstNameAttribute).Value,
-                                LastName = customerAttributes.FirstOrDefault(item => item.Name == NopCustomerDefaults.LastNameAttribute).Value,
-                                Company = customerAttributes.FirstOrDefault(item => item.Name == NopCustomerDefaults.CompanyAttribute).Value,
-                                City = customerAttributes.FirstOrDefault(item => item.Name == NopCustomerDefaults.CityAttribute).Value,
-                                Street = customerAttributes.FirstOrDefault(item => item.Name == NopCustomerDefaults.StreetAddressAttribute).Value,
-                                Zip = customerAttributes.FirstOrDefault(item => item.Name == NopCustomerDefaults.ZipPostalCodeAttribute).Value,
-                                Country = customerAttributes.FirstOrDefault(item => item.Name == NopCustomerDefaults.CountryIdAttribute).Value,
-                                Phone = customerAttributes.FirstOrDefault(item => item.Name == NopCustomerDefaults.PhoneAttribute).Value,
-                                Birthday = customerAttributes.FirstOrDefault(item => item.Name == NopCustomerDefaults.DateOfBirthAttribute).Value,
-                                Gender = customerAttributes.FirstOrDefault(item => item.Name == NopCustomerDefaults.GenderAttribute).Value
-                            })
-                            .ToList();
-
-                        if (_ecomailSettings.ConsentId > 0)
-                        {
-                            var gdprLogs = await _gdprService.GetAllLogAsync(consentId: _ecomailSettings.ConsentId, requestType: GdprRequestType.ConsentAgree);
-                            contactValues = contactValues.Where(contact => gdprLogs.Any(consent => consent.CustomerId == contact.Id)).ToList();
-                        }
-
-                        var subscribers = new List<SubscriberDataRequest>();
-                        foreach (var contact in contactValues)
-                        {
-                            subscribers.Add(new SubscriberDataRequest
-                            {
-                                Email = contact.Email,
-                                FirstName = contact.FirstName ?? string.Empty,
-                                Surname = contact.LastName ?? string.Empty,
-                                Company = contact.Company ?? string.Empty,
-                                City = contact.City ?? string.Empty,
-                                Street = contact.Street ?? string.Empty,
-                                Zip = contact.Zip ?? string.Empty,
-                                Country = contact.Country ?? string.Empty,
-                                Phone = contact.Phone ?? string.Empty,
-                                Birthday = contact.Birthday ?? string.Empty,
-                                Gender = string.IsNullOrEmpty(contact.Gender)
-                                    ? string.Empty
-                                    : contact.Gender.Equals("M", StringComparison.InvariantCultureIgnoreCase) ? "male" : "female",
-                                CustomFields = new Dictionary<string, CustomFieldsInfo>
-                                {
-                                    [EcomailDefaults.SubscriberStoreIdAttribute] = new CustomFieldsInfo(store.Id.ToString(), "int"),
-                                    [EcomailDefaults.SubscriberStoreNameAttribute] = new CustomFieldsInfo(store.Name, "string"),
-                                    [EcomailDefaults.SubscriberStoreUrlAttribute] = new CustomFieldsInfo(store.Url, "string")
-                                }
-                            });
-                        }
-
-                        var subscribersAddOnBulkRequest = new SubscribersAddOnBulkRequest
-                        {
-                            SubscriberDataList = subscribers,
-                            UpdateExisting = true,
-                            Resubscribe = false,
-                            TriggerAutoresponders = false
-                        };
-
-                        var payload = JsonConvert.SerializeObject(subscribersAddOnBulkRequest);
-                        var response = string.Empty;
+                    if (_ecomailSettings.ImportOrdersOnSync)
+                    {
+                        var importedOrders = 0;
                         try
                         {
-                            response = await _ecomailHttpClient
-                                .RequestAsync(string.Format(EcomailDefaults.SubscribeInBulkApiUrl, listId), payload, HttpMethod.Post, apiKey);
+                            var emails = subscribers.Select(subscriber => subscriber.Email).Distinct().ToList();
+                            var orders = await PrepareOrdersAsync(emails, store.Id);
+                            var ordersPageIndex = 0;
+                            var ordersPageSize = 1000;
+                            while (true)
+                            {
+                                //we can import 1000 transactions in one request
+                                var transactions = orders.Skip(ordersPageIndex * ordersPageSize).Take(ordersPageSize).ToList();
+                                if (!transactions.Any())
+                                    break;
+
+                                //set them as synced
+                                await _ecomailOrderService
+                                    .InsertOrdersAsync(transactions.Select(item => item.TransactionData.OrderId).ToList(), _ecomailSettings.ApiKey);
+
+                                //import
+                                var ordersRequest = JsonConvert.SerializeObject(new TransactionsRequest { Transactions = transactions });
+                                var response = await _ecomailHttpClient
+                                    .RequestAsync(EcomailDefaults.AddTransactionsApiUrl, ordersRequest, HttpMethod.Post);
+                                ordersPageIndex++;
+                                importedOrders += transactions.Count;
+                            }
                         }
                         catch (Exception ex)
                         {
-                            throw new NopException($"Failed to import contacts to list #{listId}. {ex.Message}");
+                            throw new NopException($"Failed to import some orders of contacts to list #{_ecomailSettings.ListId}. {ex.Message}");
                         }
-
-                        contacts += subscribers.Count;
-                        pageIndex++;
+                        messages.Add((NotifyType.Success, $"Synchronization info: {importedOrders} orders of contacts have been imported"));
                     }
 
-                    //success
-                    messages.Add((NotifyType.Success, $"Synchronization info: {contacts} contacts have been imported to list '{list.ContactListInfo?.Name}'"));
+                    importedContacts += subscribers.Count;
+                    pageIndex++;
                 }
-                catch (Exception exception)
-                {
-                    messages.Add((NotifyType.Success, $"Synchronization info: {contacts} contacts have been imported"));
-                    messages.Add((NotifyType.Error, $"Synchronization error: {exception.Message}"));
-                    var logMessage = $"{EcomailDefaults.SystemName} error: {Environment.NewLine}{exception.Message}";
-                    await _logger.ErrorAsync(logMessage, exception, await _workContext.GetCurrentCustomerAsync());
-                }
+
+                messages.Add((NotifyType.Success, $"Synchronization info: {importedContacts} contacts have been imported to list '{list.ContactListInfo?.Name}'"));
+            }
+            catch (Exception exception)
+            {
+                messages.Add((NotifyType.Success, $"Synchronization info: {importedContacts} contacts have been imported"));
+                messages.Add((NotifyType.Error, $"Synchronization error: {exception.Message}"));
+                var logMessage = $"{EcomailDefaults.SystemName} error: {Environment.NewLine}{exception.Message}";
+                await _logger.ErrorAsync(logMessage, exception, await _workContext.GetCurrentCustomerAsync());
             }
 
             return messages;
         }
 
         /// <summary>
-        /// Export all contacts from account to the sores
+        /// Export all contacts from Ecomail account to the store
         /// </summary>
-        /// <param name="storeIds">List of store ids</param>
         /// <returns>
         /// A task that represents the asynchronous operation
         /// The task result contains the list of sync messages
         /// </returns>
-        private async Task<List<(NotifyType Type, string Message)>> ExportContactsAsync(List<int> storeIds)
+        private async Task<List<(NotifyType Type, string Message)>> ExportContactsAsync()
         {
             var messages = new List<(NotifyType, string)>();
-            foreach (var storeId in storeIds)
+            var contacts = 0;
+            try
             {
-                var contacts = 0;
-                try
+                if (!_ecomailSettings.ExportContactsOnSync)
+                    return new();
+
+                if (string.IsNullOrEmpty(_ecomailSettings.ApiKey))
+                    throw new NopException("Plugin not configured");
+
+                //ensure list exists
+                var list = await GetListByIdAsync(_ecomailSettings.ListId)
+                    ?? throw new NopException("Contact list to synchronize not set");
+
+                var store = await _storeContext.GetCurrentStoreAsync();
+
+                var pageIndex = 1;
+                var pageSize = _ecomailSettings.SyncPageSize;
+                while (true)
                 {
-                    var exportKey = $"{nameof(EcomailSettings)}.{nameof(EcomailSettings.ExportContactsOnSync)}";
-                    var export = await _settingService.GetSettingByKeyAsync<bool?>(exportKey, storeId: storeId);
-                    if (export is null && storeId > 0)
-                        export = await _settingService.GetSettingByKeyAsync<bool?>(exportKey);
-                    if (export != true)
-                        continue;
-
-                    var apiKeyKey = $"{nameof(EcomailSettings)}.{nameof(EcomailSettings.ApiKey)}";
-                    var apiKey = await _settingService.GetSettingByKeyAsync<string>(apiKeyKey, storeId: storeId);
-                    if (string.IsNullOrEmpty(apiKey) && storeId > 0)
-                        apiKey = await _settingService.GetSettingByKeyAsync<string>(apiKeyKey);
-                    if (string.IsNullOrEmpty(apiKey))
-                        throw new NopException("Plugin not configured");
-
-                    //get list identifier from the settings
-                    var listKey = $"{nameof(EcomailSettings)}.{nameof(EcomailSettings.ListId)}";
-                    var listId = await _settingService.GetSettingByKeyAsync<int>(listKey, storeId: storeId);
-                    if (listId == 0)
-                        listId = await _settingService.GetSettingByKeyAsync<int>(listKey);
-                    if (listId == 0)
-                        throw new NopException("Contact list to synchronize not set");
-
-                    //ensure list exists
-                    var list = await GetListByIdAsync(listId, apiKey);
-
-                    var store = storeId > 0
-                        ? await _storeService.GetStoreByIdAsync(storeId)
-                        : await _storeContext.GetCurrentStoreAsync();
-
-                    var pageIndex = 1;
-                    var pageSize = _ecomailSettings.SyncPageSize;
-                    while (true)
+                    var url = string.Format(EcomailDefaults.GetSubscribersApiUrl, _ecomailSettings.ListId) + $"?per_page={pageSize}&page={pageIndex}";
+                    var response = string.Empty;
+                    try
                     {
-                        var url = string.Format(EcomailDefaults.SubscribeListOfEcomailApiUrl, listId) + $"?per_page={pageSize}&page={pageIndex}";
-                        var response = string.Empty;
-                        try
-                        {
-                            response = await _ecomailHttpClient.RequestAsync(url, null, HttpMethod.Get, apiKey);
-                        }
-                        catch (Exception ex)
-                        {
-                            throw new NopException($"Failed to export contacts from list #{listId}. {ex.Message}");
-                        }
-                        var responseValue = JsonConvert.DeserializeObject<SubscribersListResponse>(response);
-                        if (responseValue?.SubscribersDataList is null || !responseValue.SubscribersDataList.Any())
-                            break;
-
-                        //subscribe
-                        var subscribers = responseValue.SubscribersDataList
-                            .Where(sd => sd.Status == (int)ContactStatus.Subscribed)
-                            .Select(sd => sd.Email)
-                            .ToList();
-                        foreach (var email in subscribers)
-                        {
-                            var subscription = await _newsLetterSubscriptionService.GetNewsLetterSubscriptionByEmailAndStoreIdAsync(email, store.Id);
-                            if (subscription is null)
-                            {
-                                await _newsLetterSubscriptionService.InsertNewsLetterSubscriptionAsync(new()
-                                {
-                                    Active = true,
-                                    Email = email,
-                                    StoreId = store.Id,
-                                    NewsLetterSubscriptionGuid = Guid.NewGuid(),
-                                    CreatedOnUtc = DateTime.UtcNow
-                                }, false);
-                            }
-                            else if (!subscription.Active)
-                            {
-                                subscription.Active = true;
-                                await _newsLetterSubscriptionService.UpdateNewsLetterSubscriptionAsync(subscription, false);
-                            }
-                        }
-                        contacts += subscribers.Count;
-
-                        //unsubscribe
-                        var unsubscribers = responseValue.SubscribersDataList
-                            .Where(sd => sd.Status == (int)ContactStatus.Unsubscribed)
-                            .Select(sd => sd.Email)
-                            .ToList();
-                        foreach (var email in unsubscribers)
-                        {
-                            var subscription = await _newsLetterSubscriptionService.GetNewsLetterSubscriptionByEmailAndStoreIdAsync(email, store.Id);
-                            if (subscription?.Active == true)
-                            {
-                                subscription.Active = false;
-                                await _newsLetterSubscriptionService.UpdateNewsLetterSubscriptionAsync(subscription, false);
-                            }
-                        }
-                        contacts += unsubscribers.Count;
-
-                        pageIndex++;
-
-                        if (responseValue.CurrentPage == responseValue.LastPage)
-                            break;
+                        response = await _ecomailHttpClient.RequestAsync(url, null, HttpMethod.Get);
                     }
+                    catch (Exception ex)
+                    {
+                        throw new NopException($"Failed to export contacts from list #{_ecomailSettings.ListId}. {ex.Message}");
+                    }
+                    var responseValue = JsonConvert.DeserializeObject<SubscribersListResponse>(response);
+                    if (responseValue?.SubscribersDataList is null || !responseValue.SubscribersDataList.Any())
+                        break;
 
-                    messages.Add((NotifyType.Success, $"Synchronization info: {contacts} contacts have been exported from list '{list.ContactListInfo?.Name}'"));
+                    //subscribe
+                    var subscribers = responseValue.SubscribersDataList
+                        .Where(sd => sd.Status == (int)ContactStatus.Subscribed)
+                        .Select(sd => sd.Email)
+                        .ToList();
+                    foreach (var email in subscribers)
+                    {
+                        var subscription = await _newsLetterSubscriptionService.GetNewsLetterSubscriptionByEmailAndStoreIdAsync(email, store.Id);
+                        if (subscription is null)
+                        {
+                            await _newsLetterSubscriptionService.InsertNewsLetterSubscriptionAsync(new()
+                            {
+                                Active = true,
+                                Email = email,
+                                StoreId = store.Id,
+                                NewsLetterSubscriptionGuid = Guid.NewGuid(),
+                                CreatedOnUtc = DateTime.UtcNow
+                            }, false);
+                        }
+                        else if (!subscription.Active)
+                        {
+                            subscription.Active = true;
+                            await _newsLetterSubscriptionService.UpdateNewsLetterSubscriptionAsync(subscription, false);
+                        }
+                    }
+                    contacts += subscribers.Count;
+
+                    //unsubscribe
+                    var unsubscribers = responseValue.SubscribersDataList
+                        .Where(sd => sd.Status == (int)ContactStatus.Unsubscribed)
+                        .Select(sd => sd.Email)
+                        .ToList();
+                    foreach (var email in unsubscribers)
+                    {
+                        var subscription = await _newsLetterSubscriptionService.GetNewsLetterSubscriptionByEmailAndStoreIdAsync(email, store.Id);
+                        if (subscription?.Active == true)
+                        {
+                            subscription.Active = false;
+                            await _newsLetterSubscriptionService.UpdateNewsLetterSubscriptionAsync(subscription, false);
+                        }
+                    }
+                    contacts += unsubscribers.Count;
+
+                    pageIndex++;
+
+                    if (responseValue.CurrentPage == responseValue.LastPage)
+                        break;
                 }
-                catch (Exception exception)
-                {
-                    messages.Add((NotifyType.Success, $"Synchronization info: {contacts} contacts have been exported"));
-                    messages.Add((NotifyType.Error, $"Synchronization error: {exception.Message}"));
-                    var logMessage = $"{EcomailDefaults.SystemName} error: {Environment.NewLine}{exception.Message}";
-                    await _logger.ErrorAsync(logMessage, exception, await _workContext.GetCurrentCustomerAsync());
-                }
+
+                messages.Add((NotifyType.Success, $"Synchronization info: {contacts} contacts have been exported from list '{list.ContactListInfo?.Name}'"));
+            }
+            catch (Exception exception)
+            {
+                messages.Add((NotifyType.Success, $"Synchronization info: {contacts} contacts have been exported"));
+                messages.Add((NotifyType.Error, $"Synchronization error: {exception.Message}"));
+                var logMessage = $"{EcomailDefaults.SystemName} error: {Environment.NewLine}{exception.Message}";
+                await _logger.ErrorAsync(logMessage, exception, await _workContext.GetCurrentCustomerAsync());
             }
 
             return messages;
+        }
+
+        /// <summary>
+        /// Prepare newsletter subscribers to sync
+        /// </summary>
+        /// <param name="storeId">Store id</param>
+        /// <param name="pageIndex">Page index</param>
+        /// <param name="pageSize">Page size</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the list of subscriber data
+        /// </returns>
+        private async Task<List<SubscriberDataRequest>> PrepareSubscribersAsync(int storeId, int pageIndex, int pageSize)
+        {
+            var subscribers = new List<SubscriberDataRequest>();
+
+            var attributeNames = new[]
+            {
+                NopCustomerDefaults.FirstNameAttribute,
+                NopCustomerDefaults.LastNameAttribute,
+                NopCustomerDefaults.CountryIdAttribute,
+                NopCustomerDefaults.CompanyAttribute,
+                NopCustomerDefaults.CityAttribute,
+                NopCustomerDefaults.StreetAddressAttribute,
+                NopCustomerDefaults.ZipPostalCodeAttribute,
+                NopCustomerDefaults.PhoneAttribute,
+                NopCustomerDefaults.DateOfBirthAttribute,
+                NopCustomerDefaults.GenderAttribute
+            };
+
+            //get contacts of newsletter subscribers
+            var contactValues = _newsLetterSubscriptionRepository.Table
+                .Where(subscription => subscription.Active && subscription.StoreId == storeId)
+                .OrderBy(subscription => subscription.Email)
+                .Skip(pageIndex * pageSize)
+                .Take(pageSize)
+                .Join(_customerRepository.Table.Where(customer => customer.Active && !customer.Deleted),
+                    subscription => subscription.Email,
+                    customer => customer.Email,
+                    (subscription, customer) => new { Customer = customer, Active = subscription.Active })
+                .Join(_genericAttributeRepository.Table.Where(attribute => attribute.KeyGroup == nameof(Customer) && attributeNames.Contains(attribute.Key)),
+                    customer => customer.Customer.Id,
+                    attribute => attribute.EntityId,
+                    (customer, attribute) => new { Customer = customer.Customer, Active = customer.Active, Name = attribute.Key, Value = attribute.Value })
+                .SelectMany(customerAttribute => _countryRepository.Table
+                    .Where(country => customerAttribute.Name == NopCustomerDefaults.CountryIdAttribute && country.Id.ToString() == customerAttribute.Value)
+                    .DefaultIfEmpty(),
+                    (customerAttribute, country) => new
+                    {
+                        Id = customerAttribute.Customer.Id,
+                        Active = customerAttribute.Active,
+                        Email = customerAttribute.Customer.Email,
+                        Name = customerAttribute.Name,
+                        Value = customerAttribute.Name == NopCustomerDefaults.CountryIdAttribute ? country.TwoLetterIsoCode : customerAttribute.Value
+                    })
+                .GroupBy(customerAttribute => customerAttribute.Email)
+                .Select(customerAttributes => new
+                {
+                    Email = customerAttributes.Key,
+                    Id = customerAttributes.FirstOrDefault().Id,
+                    Active = customerAttributes.FirstOrDefault().Active,
+                    FirstName = customerAttributes.FirstOrDefault(item => item.Name == NopCustomerDefaults.FirstNameAttribute).Value,
+                    LastName = customerAttributes.FirstOrDefault(item => item.Name == NopCustomerDefaults.LastNameAttribute).Value,
+                    Company = customerAttributes.FirstOrDefault(item => item.Name == NopCustomerDefaults.CompanyAttribute).Value,
+                    City = customerAttributes.FirstOrDefault(item => item.Name == NopCustomerDefaults.CityAttribute).Value,
+                    Street = customerAttributes.FirstOrDefault(item => item.Name == NopCustomerDefaults.StreetAddressAttribute).Value,
+                    Zip = customerAttributes.FirstOrDefault(item => item.Name == NopCustomerDefaults.ZipPostalCodeAttribute).Value,
+                    Country = customerAttributes.FirstOrDefault(item => item.Name == NopCustomerDefaults.CountryIdAttribute).Value,
+                    Phone = customerAttributes.FirstOrDefault(item => item.Name == NopCustomerDefaults.PhoneAttribute).Value,
+                    Birthday = customerAttributes.FirstOrDefault(item => item.Name == NopCustomerDefaults.DateOfBirthAttribute).Value,
+                    Gender = customerAttributes.FirstOrDefault(item => item.Name == NopCustomerDefaults.GenderAttribute).Value
+                })
+                .ToList();
+
+            //GDPR
+            if (_ecomailSettings.ConsentId > 0)
+            {
+                var gdprLogs = await _gdprService.GetAllLogAsync(consentId: _ecomailSettings.ConsentId, requestType: GdprRequestType.ConsentAgree);
+                contactValues = contactValues.Where(contact => gdprLogs.Any(consent => consent.CustomerId == contact.Id)).ToList();
+            }
+
+            foreach (var contact in contactValues)
+            {
+                var subscriber = new SubscriberDataRequest
+                {
+                    Email = contact.Email,
+                    FirstName = contact.FirstName ?? string.Empty,
+                    Surname = contact.LastName ?? string.Empty,
+                    Company = contact.Company ?? string.Empty,
+                    City = contact.City ?? string.Empty,
+                    Street = contact.Street ?? string.Empty,
+                    Zip = contact.Zip ?? string.Empty,
+                    Country = contact.Country ?? string.Empty,
+                    Phone = contact.Phone ?? string.Empty,
+                    Birthday = contact.Birthday ?? string.Empty,
+                    Gender = string.IsNullOrEmpty(contact.Gender)
+                        ? string.Empty
+                        : contact.Gender.Equals("M", StringComparison.InvariantCultureIgnoreCase) ? "male" : "female",
+                    CustomFields = new() { [EcomailDefaults.SubscriberCustomField.Name] = EcomailDefaults.SubscriberCustomField.Value }
+                };
+
+                subscribers.Add(subscriber);
+            }
+
+            //add contacts without details
+            var notCustomers = _newsLetterSubscriptionRepository.Table
+                .Where(subscription => subscription.Active && subscription.StoreId == storeId)
+                .OrderBy(subscription => subscription.Email)
+                .Skip(pageIndex * pageSize)
+                .Take(pageSize)
+                .SelectMany(subscription => _customerRepository.Table
+                    .Where(customer => subscription.Email == customer.Email && customer.Active && !customer.Deleted)
+                    .DefaultIfEmpty(),
+                    (subscription, customer) => new { Email = subscription.Email, Customer = customer, Active = subscription.Active })
+                .Where(details => details.Customer == null)
+                .Select(details => new { Email = details.Email, Active = details.Active })
+                .ToList();
+
+            foreach (var contact in notCustomers)
+            {
+                var subscriber = new SubscriberDataRequest
+                {
+                    Email = contact.Email,
+                    CustomFields = new() { [EcomailDefaults.SubscriberCustomField.Name] = EcomailDefaults.SubscriberCustomField.Value }
+                };
+
+                subscribers.Add(subscriber);
+            }
+
+            return subscribers;
+        }
+
+        /// <summary>
+        /// Prepare customers to sync
+        /// </summary>
+        /// <param name="storeId">Store id</param>
+        /// <param name="pageIndex">Page index</param>
+        /// <param name="pageSize">Page size</param>
+        /// <returns>The list of subscriber data</returns>
+        private List<SubscriberDataRequest> PrepareCustomers(int storeId, int pageIndex, int pageSize)
+        {
+            var customers = new List<SubscriberDataRequest>();
+            var statusIds = ((_ecomailSettings.OrderStatuses?.Any() ?? false) ? _ecomailSettings.OrderStatuses : new() { (int)OrderStatus.Complete })
+                .Select(status => status)
+                .ToList();
+
+            //get contacts of customers
+            var contactValues = _orderRepository.Table
+                .Where(order => !order.Deleted && order.StoreId == storeId && statusIds.Contains(order.OrderStatusId))
+                .OrderByDescending(order => order.CreatedOnUtc)
+                .Skip(pageIndex * pageSize)
+                .Take(pageSize)
+                .Join(_addressRepository.Table,
+                    order => order.BillingAddressId,
+                    address => address.Id,
+                    (order, address) => address)
+                .SelectMany(customerAddress => _countryRepository.Table
+                    .Where(country => customerAddress.CountryId.HasValue && customerAddress.CountryId.Value == country.Id)
+                    .DefaultIfEmpty(),
+                    (customerAddress, country) => new
+                    {
+                        Email = customerAddress.Email,
+                        FirstName = customerAddress.FirstName,
+                        LastName = customerAddress.LastName,
+                        Company = customerAddress.Company,
+                        City = customerAddress.City,
+                        Street = customerAddress.Address1,
+                        Zip = customerAddress.ZipPostalCode,
+                        Phone = customerAddress.PhoneNumber,
+                        Country = country.TwoLetterIsoCode
+                    })
+                .GroupBy(customerAddress => customerAddress.Email)
+                .Select(customerAddress => new
+                {
+                    Email = customerAddress.Key,
+                    FirstName = customerAddress.FirstOrDefault().FirstName,
+                    LastName = customerAddress.FirstOrDefault().LastName,
+                    Company = customerAddress.FirstOrDefault().Company,
+                    City = customerAddress.FirstOrDefault().City,
+                    Street = customerAddress.FirstOrDefault().Street,
+                    Zip = customerAddress.FirstOrDefault().Zip,
+                    Country = customerAddress.FirstOrDefault().Country,
+                    Phone = customerAddress.FirstOrDefault().Phone
+                })
+                .ToList();
+
+            foreach (var contact in contactValues)
+            {
+                customers.Add(new SubscriberDataRequest
+                {
+                    Email = contact.Email,
+                    FirstName = contact.FirstName ?? string.Empty,
+                    Surname = contact.LastName ?? string.Empty,
+                    Company = contact.Company ?? string.Empty,
+                    City = contact.City ?? string.Empty,
+                    Street = contact.Street ?? string.Empty,
+                    Zip = contact.Zip ?? string.Empty,
+                    Country = contact.Country ?? string.Empty,
+                    Phone = contact.Phone ?? string.Empty
+                });
+            }
+
+            return customers;
+        }
+
+        /// <summary>
+        /// Prepare orders to sync
+        /// </summary>
+        /// <param name="emails">Emails to filter orders</param>
+        /// <param name="storeId">Store id</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the list of subscriber data
+        /// </returns>
+        private async Task<List<TransactionCreateRequest>> PrepareOrdersAsync(List<string> emails, int storeId)
+        {
+            var transactions = new List<TransactionCreateRequest>();
+            var statusIds = ((_ecomailSettings.OrderStatuses?.Any() ?? false) ? _ecomailSettings.OrderStatuses : new() { (int)OrderStatus.Complete })
+                .Select(status => status)
+                .ToList();
+
+            var orders = _orderRepository.Table
+                .Where(order => !order.Deleted && order.StoreId == storeId && statusIds.Contains(order.OrderStatusId))
+                .OrderByDescending(order => order.CreatedOnUtc)
+                .GroupJoin(_orderItemRepository.Table,
+                    order => order.Id,
+                    item => item.OrderId,
+                    (order, items) => new { Order = order, Items = items })
+                .Join(_addressRepository.Table,
+                    order => order.Order.BillingAddressId,
+                    address => address.Id,
+                    (order, address) => new { Order = order.Order, Items = order.Items, Address = address })
+                .Where(order => emails.Contains(order.Address.Email))
+                .ToList();
+
+            var store = await _storeService.GetStoreByIdAsync(storeId);
+            var countries = await _countryService.GetAllCountriesAsync(showHidden: true);
+            var productIds = orders.SelectMany(order => order.Items.Select(item => item.ProductId)).Distinct().ToArray();
+            var products = await _productService.GetProductsByIdsAsync(productIds);
+            var syncedOrders = await _ecomailOrderService.GetOrdersAsync(_ecomailSettings.ApiKey);
+
+            foreach (var order in orders)
+            {
+                if (syncedOrders.Any(syncedOrder => syncedOrder.OrderId == order.Order.Id))
+                    continue;
+
+                if (!order.Items.Any())
+                    continue;
+
+                var orderDate = DateTime.SpecifyKind(statusIds.Contains((int)OrderStatus.Complete)
+                    ? (order.Order.PaidDateUtc ?? order.Order.CreatedOnUtc)
+                    : order.Order.CreatedOnUtc, DateTimeKind.Utc);
+
+                var timestamp = (int)new DateTimeOffset(orderDate).ToUnixTimeSeconds();
+                var transaction = new TransactionData
+                {
+                    Email = order.Address.Email,
+                    OrderId = order.Order.Id,
+                    OrderNumber = order.Order.CustomOrderNumber ?? order.Order.Id.ToString(),
+                    Shop = store?.Url ?? string.Empty,
+                    Amount = order.Order.OrderTotal.ToString("0.00", CultureInfo.InvariantCulture),
+                    Tax = order.Order.OrderTax.ToString("0.00", CultureInfo.InvariantCulture),
+                    Shipping = order.Order.OrderShippingExclTax.ToString("0.00", CultureInfo.InvariantCulture),
+                    City = order.Address?.City ?? string.Empty,
+                    County = order.Address?.County ?? string.Empty,
+                    Country = countries.FirstOrDefault(country => country.Id == order.Address.CountryId)?.TwoLetterIsoCode ?? string.Empty,
+                    Timestamp = timestamp
+                };
+
+                var items = order.Items.Select(orderItem => new TransactionItem
+                {
+                    ItemCode = orderItem.ProductId.ToString(),
+                    Title = products.FirstOrDefault(product => product.Id == orderItem.ProductId)?.Name,
+                    Price = orderItem.PriceInclTax.ToString("0.00", CultureInfo.InvariantCulture),
+                    Quantity = orderItem.Quantity,
+                    Timestamp = timestamp,
+                }).ToList();
+
+                transactions.Add(new TransactionCreateRequest { TransactionData = transaction, TransactionItems = items });
+            }
+
+            return transactions;
         }
 
         /// <summary>
@@ -544,10 +749,11 @@ namespace Nop.Plugin.Misc.Ecomail.Services
                 };
             }).ToListAsync();
 
-            await using var stringWriter = new StringWriter();
+            await using var stringWriter = new Utf8StringWriter();
             await using var writer = XmlWriter.Create(stringWriter, new XmlWriterSettings
             {
                 Async = true,
+                Encoding = Encoding.UTF8,
                 ConformanceLevel = ConformanceLevel.Auto
             });
 
@@ -589,23 +795,22 @@ namespace Nop.Plugin.Misc.Ecomail.Services
         /// <summary>
         /// Get available lists to synchronize contacts
         /// </summary>
-        /// <param name="apiKey">API key</param>
         /// <returns>
         /// A task that represents the asynchronous operation
         /// The task result contains the list of id-name pairs of lists; error if exists
         /// </returns>
-        public async Task<(List<(string Id, string Name)> Result, string Error)> GetListsAsync(string apiKey)
+        public async Task<(List<(string Id, string Name)> Result, string Error)> GetListsAsync()
         {
             return await HandleFunctionAsync(async () =>
             {
-                if (string.IsNullOrEmpty(apiKey))
+                if (string.IsNullOrEmpty(_ecomailSettings.ApiKey))
                     throw new NopException("Plugin not configured");
 
                 var availableLists = new List<(string Id, string Name)>();
                 var response = string.Empty;
                 try
                 {
-                    response = await _ecomailHttpClient.RequestAsync(EcomailDefaults.EcomailContactListApiUrl, null, HttpMethod.Get, apiKey);
+                    response = await _ecomailHttpClient.RequestAsync(EcomailDefaults.ListsApiUrl, null, HttpMethod.Get);
                 }
                 catch (Exception ex)
                 {
@@ -643,7 +848,7 @@ namespace Nop.Plugin.Misc.Ecomail.Services
                 var response = string.Empty;
                 try
                 {
-                    response = await _ecomailHttpClient.RequestAsync(EcomailDefaults.EcomailContactListApiUrl, payload, HttpMethod.Post);
+                    response = await _ecomailHttpClient.RequestAsync(EcomailDefaults.ListsApiUrl, payload, HttpMethod.Post);
                 }
                 catch (Exception ex)
                 {
@@ -667,28 +872,20 @@ namespace Nop.Plugin.Misc.Ecomail.Services
         /// <summary>
         /// Synchronize contacts 
         /// </summary>
-        /// <param name="synchronizationTask">Whether it's a scheduled synchronization</param>
-        /// <param name="storeId">Store identifier; pass 0 to synchronize contacts for all stores</param>
         /// <returns>
         /// A task that represents the asynchronous operation
         /// The task result contains the list of sync messages
         /// </returns>
-        public async Task<List<(NotifyType Type, string Message)>> SynchronizeAsync(bool synchronizationTask = true, int storeId = 0)
+        public async Task<List<(NotifyType Type, string Message)>> SynchronizeAsync()
         {
             var (syncMessages, _) = await HandleFunctionAsync(async () =>
             {
                 var messages = new List<(NotifyType Type, string Message)>();
 
-                //use only passed store identifier for the manual synchronization
-                //use all store ids for the synchronization task
-                var storeIds = !synchronizationTask
-                    ? new List<int> { storeId }
-                    : new List<int> { 0 }.Union((await _storeService.GetAllStoresAsync()).Select(store => store.Id)).ToList();
-
-                var importMessages = await ImportContactsAsync(storeIds);
+                var importMessages = await ImportContactsAsync();
                 messages.AddRange(importMessages);
 
-                var exportMessages = await ExportContactsAsync(storeIds);
+                var exportMessages = await ExportContactsAsync();
                 messages.AddRange(exportMessages);
 
                 return messages;
@@ -701,84 +898,97 @@ namespace Nop.Plugin.Misc.Ecomail.Services
         /// Subscribe a single contact to the list
         /// </summary>
         /// <param name="subscription">Newsletter subscription</param>
+        /// <param name="address">Address used to sync customer details; pass null to use subscriber details to sync</param>
         /// <returns>A task that represents the asynchronous operation</returns>
-        public async Task SubscribeContactAsync(NewsLetterSubscription subscription)
+        public async Task SubscribeContactAsync(NewsLetterSubscription subscription, Address address = null)
         {
             await HandleFunctionAsync(async () =>
             {
-                if (subscription is null)
-                    throw new ArgumentNullException(nameof(subscription));
+                if (string.IsNullOrEmpty(subscription?.Email))
+                    throw new NopException("Email not set");
 
-                var customer = await _customerService.GetCustomerByEmailAsync(subscription.Email)
-                    ?? throw new NopException($"Customer not found by email '{subscription.Email}'");
-
-                var apiKeyKey = $"{nameof(EcomailSettings)}.{nameof(EcomailSettings.ApiKey)}";
-                var apiKey = await _settingService.GetSettingByKeyAsync<string>(apiKeyKey, storeId: subscription.StoreId);
-                if (string.IsNullOrEmpty(apiKey))
-                    apiKey = await _settingService.GetSettingByKeyAsync<string>(apiKeyKey);
-                if (string.IsNullOrEmpty(apiKey))
+                if (string.IsNullOrEmpty(_ecomailSettings.ApiKey))
                     throw new NopException("Plugin not configured");
 
-                //get list identifier from the settings
-                var listKey = $"{nameof(EcomailSettings)}.{nameof(EcomailSettings.ListId)}";
-                var listId = await _settingService.GetSettingByKeyAsync<int>(listKey, storeId: subscription.StoreId);
-                if (listId == 0)
-                    listId = await _settingService.GetSettingByKeyAsync<int>(listKey);
-                if (listId == 0)
-                    throw new NopException("Contact list to synchronize not set");
-
                 //ensure list exists
-                await GetListByIdAsync(listId, apiKey);
+                _ = await GetListByIdAsync(_ecomailSettings.ListId)
+                    ?? throw new NopException("Contact list to synchronize not set");
 
-                var store = await _storeService.GetStoreByIdAsync(subscription.StoreId);
-                var email = subscription.Email;
-                var countryId = await _genericAttributeService.GetAttributeAsync<int>(customer, NopCustomerDefaults.CountryIdAttribute);
-                var country = await _countryService.GetCountryByIdAsync(countryId);
-                var firstName = await _genericAttributeService.GetAttributeAsync<string>(customer, NopCustomerDefaults.FirstNameAttribute);
-                var surname = await _genericAttributeService.GetAttributeAsync<string>(customer, NopCustomerDefaults.LastNameAttribute);
-                var company = await _genericAttributeService.GetAttributeAsync<string>(customer, NopCustomerDefaults.CompanyAttribute);
-                var city = await _genericAttributeService.GetAttributeAsync<string>(customer, NopCustomerDefaults.CityAttribute);
-                var street = await _genericAttributeService.GetAttributeAsync<string>(customer, NopCustomerDefaults.StreetAddressAttribute);
-                var zip = await _genericAttributeService.GetAttributeAsync<string>(customer, NopCustomerDefaults.ZipPostalCodeAttribute);
-                var phone = await _genericAttributeService.GetAttributeAsync<string>(customer, NopCustomerDefaults.PhoneAttribute);
-                var birthday = await _genericAttributeService.GetAttributeAsync<string>(customer, NopCustomerDefaults.DateOfBirthAttribute);
-                var gender = await _genericAttributeService.GetAttributeAsync<string>(customer, NopCustomerDefaults.GenderAttribute);
-                gender = string.IsNullOrEmpty(gender) ? "" : gender.Equals("M", StringComparison.InvariantCultureIgnoreCase) ? "male" : "female";
-
-                var subscriberData = new SubscriberDataRequest
+                var customer = await _customerService.GetCustomerByEmailAsync(subscription.Email);
+                if (_ecomailSettings.ConsentId > 0 &&
+                    customer is not null &&
+                    !(await _gdprService.IsConsentAcceptedAsync(_ecomailSettings.ConsentId, customer.Id) ?? true))
                 {
-                    Email = subscription.Email,
-                    FirstName = firstName ?? string.Empty,
-                    Surname = surname ?? string.Empty,
-                    Company = company ?? string.Empty,
-                    City = city ?? string.Empty,
-                    Street = street ?? string.Empty,
-                    Zip = zip ?? string.Empty,
-                    Country = country?.Name ?? string.Empty,
-                    Phone = phone ?? string.Empty,
-                    Birthday = birthday ?? string.Empty,
-                    Gender = gender ?? string.Empty,
-                    CustomFields = new Dictionary<string, CustomFieldsInfo>
-                    {
-                        [EcomailDefaults.SubscriberStoreIdAttribute] = new CustomFieldsInfo(store.Id.ToString(), "int"),
-                        [EcomailDefaults.SubscriberStoreNameAttribute] = new CustomFieldsInfo(store.Name, "string"),
-                        [EcomailDefaults.SubscriberStoreUrlAttribute] = new CustomFieldsInfo(store.Url, "string")
-                    }
-                };
+                    throw new NopException("Newsletter consent is not accepted");
+                }
+
+                var subscriberData = new SubscriberDataRequest { Email = subscription.Email };
+
+                if (address is not null)
+                {
+                    subscriberData.FirstName = address.FirstName ?? string.Empty;
+                    subscriberData.Surname = address.LastName ?? string.Empty;
+                    subscriberData.Company = address.Company ?? string.Empty;
+                    subscriberData.City = address.City ?? string.Empty;
+                    subscriberData.Street = address.Address1 ?? string.Empty;
+                    subscriberData.Zip = address.ZipPostalCode ?? string.Empty;
+                    subscriberData.Country = (await _countryService.GetCountryByIdAsync(address.CountryId ?? 0))?.TwoLetterIsoCode ?? string.Empty;
+                    subscriberData.Phone = address.PhoneNumber ?? string.Empty;
+                }
+                else if (customer is not null)
+                {
+                    var countryId = await _genericAttributeService.GetAttributeAsync<int>(customer, NopCustomerDefaults.CountryIdAttribute);
+                    var country = await _countryService.GetCountryByIdAsync(countryId);
+                    var firstName = await _genericAttributeService.GetAttributeAsync<string>(customer, NopCustomerDefaults.FirstNameAttribute);
+                    var surname = await _genericAttributeService.GetAttributeAsync<string>(customer, NopCustomerDefaults.LastNameAttribute);
+                    var company = await _genericAttributeService.GetAttributeAsync<string>(customer, NopCustomerDefaults.CompanyAttribute);
+                    var city = await _genericAttributeService.GetAttributeAsync<string>(customer, NopCustomerDefaults.CityAttribute);
+                    var street = await _genericAttributeService.GetAttributeAsync<string>(customer, NopCustomerDefaults.StreetAddressAttribute);
+                    var zip = await _genericAttributeService.GetAttributeAsync<string>(customer, NopCustomerDefaults.ZipPostalCodeAttribute);
+                    var phone = await _genericAttributeService.GetAttributeAsync<string>(customer, NopCustomerDefaults.PhoneAttribute);
+                    var birthday = await _genericAttributeService.GetAttributeAsync<string>(customer, NopCustomerDefaults.DateOfBirthAttribute);
+                    var gender = await _genericAttributeService.GetAttributeAsync<string>(customer, NopCustomerDefaults.GenderAttribute);
+                    gender = string.IsNullOrEmpty(gender) ? "" : gender.Equals("M", StringComparison.InvariantCultureIgnoreCase) ? "male" : "female";
+
+                    subscriberData.FirstName = firstName ?? string.Empty;
+                    subscriberData.Surname = surname ?? string.Empty;
+                    subscriberData.Company = company ?? string.Empty;
+                    subscriberData.City = city ?? string.Empty;
+                    subscriberData.Street = street ?? string.Empty;
+                    subscriberData.Zip = zip ?? string.Empty;
+                    subscriberData.Country = country?.TwoLetterIsoCode ?? string.Empty;
+                    subscriberData.Phone = phone ?? string.Empty;
+                    subscriberData.Birthday = birthday ?? string.Empty;
+                    subscriberData.Gender = gender ?? string.Empty;
+                }
+
+                if (subscription.Active)
+                    subscriberData.CustomFields = new() { [EcomailDefaults.SubscriberCustomField.Name] = EcomailDefaults.SubscriberCustomField.Value };
+
+                var emailExists = false;
+                try
+                {
+                    var response = await _ecomailHttpClient
+                        .RequestAsync(string.Format(EcomailDefaults.GetSubscriberApiUrl, subscription.Email), null, HttpMethod.Get);
+                    var subscriber = new ContactResponse();
+                    subscriber = JsonConvert.DeserializeAnonymousType(response, new { Subscriber = subscriber }).Subscriber;
+                    emailExists = subscriber?.Lists?.Any(list => list.Value?.ListId == _ecomailSettings.ListId && list.Value?.Status == 1) ?? false;
+                }
+                catch { }
 
                 var subscriberAddRequest = new SubscriberAddRequest
                 {
                     SubscriberData = subscriberData,
+                    TriggerAutoresponders = !emailExists,
                     UpdateExisting = true,
-                    Resubscribe = false,
-                    TriggerAutoresponders = false
+                    Resubscribe = true
                 };
 
                 var payload = JsonConvert.SerializeObject(subscriberAddRequest);
                 try
                 {
                     var response = await _ecomailHttpClient
-                        .RequestAsync(string.Format(EcomailDefaults.SubscribeToEcomailApiUrl, listId), payload, HttpMethod.Post, apiKey);
+                        .RequestAsync(string.Format(EcomailDefaults.SubscribeApiUrl, _ecomailSettings.ListId), payload, HttpMethod.Post);
                 }
                 catch (Exception ex)
                 {
@@ -798,35 +1008,21 @@ namespace Nop.Plugin.Misc.Ecomail.Services
         {
             await HandleFunctionAsync(async () =>
             {
-                if (subscription is null)
-                    throw new ArgumentNullException(nameof(subscription));
+                if (string.IsNullOrEmpty(subscription?.Email))
+                    throw new NopException("Email not set");
 
-                var apiKeyKey = $"{nameof(EcomailSettings)}.{nameof(EcomailSettings.ApiKey)}";
-                var apiKey = await _settingService.GetSettingByKeyAsync<string>(apiKeyKey, storeId: subscription.StoreId);
-                if (string.IsNullOrEmpty(apiKey))
-                    apiKey = await _settingService.GetSettingByKeyAsync<string>(apiKeyKey);
-                if (string.IsNullOrEmpty(apiKey))
+                if (string.IsNullOrEmpty(_ecomailSettings.ApiKey))
                     throw new NopException("Plugin not configured");
 
-                //get list identifier from the settings
-                var listKey = $"{nameof(EcomailSettings)}.{nameof(EcomailSettings.ListId)}";
-                var listId = await _settingService.GetSettingByKeyAsync<int>(listKey, storeId: subscription.StoreId);
-                if (listId == 0)
-                    listId = await _settingService.GetSettingByKeyAsync<int>(listKey);
-                if (listId == 0)
-                    throw new NopException("Contact list to synchronize not set");
-
                 //ensure list exists
-                await GetListByIdAsync(listId, apiKey);
+                _ = await GetListByIdAsync(_ecomailSettings.ListId)
+                    ?? throw new NopException("Contact list to synchronize not set");
 
-                var payload = JsonConvert.SerializeObject(new
-                {
-                    email = subscription.Email
-                });
+                var payload = JsonConvert.SerializeObject(new { email = subscription.Email });
                 try
                 {
                     var response = await _ecomailHttpClient
-                        .RequestAsync(string.Format(EcomailDefaults.UnubscribeFromListEcomailApiUrl, listId), payload, HttpMethod.Delete, apiKey);
+                        .RequestAsync(string.Format(EcomailDefaults.UnubscribeApiUrl, _ecomailSettings.ListId), payload, HttpMethod.Delete);
                 }
                 catch (Exception ex)
                 {
@@ -842,11 +1038,34 @@ namespace Nop.Plugin.Misc.Ecomail.Services
         #region Tracking
 
         /// <summary>
-        /// Handle shopping cart changed event
+        /// Set customer mail identifier
+        /// </summary>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public async Task SetEcomailIdAsync()
+        {
+            await HandleFunctionAsync(async () =>
+            {
+                //check id in request query
+                var ecomailId = _webHelper.QueryString<string>("ecmid");
+                if (string.IsNullOrEmpty(ecomailId))
+                    return false;
+
+                var customer = await _workContext.GetCurrentCustomerAsync();
+                if (customer.IsBackgroundTaskAccount() || customer.IsSearchEngineAccount())
+                    return false;
+
+                await _genericAttributeService.SaveAttributeAsync(customer, EcomailDefaults.CustomerEcomailIdAttribute, ecomailId);
+
+                return true;
+            });
+        }
+
+        /// <summary>
+        /// Handle shopping cart event
         /// </summary>
         /// <param name="cartItem">Shopping cart item</param>
         /// <returns>A task that represents the asynchronous operation</returns>
-        public async Task HandleShoppingCartChangedEventAsync(ShoppingCartItem cartItem)
+        public async Task HandleShoppingCartEventAsync(ShoppingCartItem cartItem)
         {
             await HandleFunctionAsync(async () =>
             {
@@ -859,26 +1078,30 @@ namespace Nop.Plugin.Misc.Ecomail.Services
                 if (!_ecomailSettings.UseTracking)
                     throw new NopException("Tracking not enabled");
 
-                var currency = await _currencyService.GetCurrencyByIdAsync(_currencySettings.PrimaryStoreCurrencyId)
-                    ?? throw new NopException("Primary store currency not found");
-
                 var customer = await _customerService.GetCustomerByIdAsync(cartItem.CustomerId)
                     ?? throw new NopException("Customer not found");
 
-                var subscription = await _newsLetterSubscriptionService.GetNewsLetterSubscriptionByEmailAndStoreIdAsync(customer.Email, cartItem.StoreId)
-                    ?? throw new NopException("Subscription not found");
+                var currency = await _currencyService.GetCurrencyByIdAsync(_currencySettings.PrimaryStoreCurrencyId)
+                    ?? throw new NopException("Primary store currency not found");
+
+                var email = customer?.Email;
+                if (string.IsNullOrEmpty(email))
+                    email = await _genericAttributeService.GetAttributeAsync<string>(customer, EcomailDefaults.CustomerEcomailIdAttribute);
+                if (string.IsNullOrEmpty(email))
+                    return false;
 
                 //prepare cart data
                 var trackEvent = new EcomailEvent
                 {
-                    Email = customer.Email ?? string.Empty,
+                    Email = email,
                     Category = "ue",
-                    Action = EcomailDefaults.BasketActionAttribute
+                    Action = EcomailDefaults.BasketActionAttribute,
+                    Label = EcomailDefaults.BasketActionAttribute
                 };
 
                 //get current customer's shopping cart
-                var store = await _storeContext.GetCurrentStoreAsync();
-                var cart = await _shoppingCartService.GetShoppingCartAsync(customer, ShoppingCartType.ShoppingCart, store.Id);
+                var store = await _storeService.GetStoreByIdAsync(cartItem.StoreId);
+                var cart = await _shoppingCartService.GetShoppingCartAsync(customer, ShoppingCartType.ShoppingCart, cartItem.StoreId);
                 var shoppingCartGuid = await _genericAttributeService.GetAttributeAsync<Guid?>(customer, EcomailDefaults.ShoppingCartGuidAttribute);
                 if (!shoppingCartGuid.HasValue || shoppingCartGuid.Value == Guid.Empty)
                     shoppingCartGuid = Guid.NewGuid();
@@ -911,7 +1134,7 @@ namespace Nop.Plugin.Misc.Ecomail.Services
 
                         return new TrackCartProduct
                         {
-                            ProductId = product.Id,
+                            ProductId = product.Id.ToString(),
                             Name = product.Name ?? string.Empty,
                             Description = product.ShortDescription ?? string.Empty,
                             FullDescription = product.FullDescription ?? string.Empty,
@@ -920,7 +1143,7 @@ namespace Nop.Plugin.Misc.Ecomail.Services
                             Url = urlHelper.RouteUrl("Product", new { SeName = seName }, _webHelper.GetCurrentRequestProtocol()),
                             ImgUrl = url ?? string.Empty,
                             Quantity = item.Quantity,
-                            Price = itemPrice
+                            Price = itemPrice.ToString("0.00", CultureInfo.InvariantCulture)
                         };
                     }).Where(product => product is not null).ToArrayAsync();
 
@@ -936,31 +1159,26 @@ namespace Nop.Plugin.Misc.Ecomail.Services
                                 url = urlHelper.RouteUrl("ShoppingCart", null, _webHelper.GetCurrentRequestProtocol()),
                                 currency = currency.CurrencyCode,
                                 affiliation = store.Name,
-                                subtotal = cartSubtotal,
-                                shipping = cartShipping ?? decimal.Zero,
-                                tax = cartTax,
-                                discount = cartDiscount
+                                subtotal = cartSubtotal.ToString("0.00", CultureInfo.InvariantCulture),
+                                shipping = (cartShipping ?? decimal.Zero).ToString("0.00", CultureInfo.InvariantCulture),
+                                tax = cartTax.ToString("0.00", CultureInfo.InvariantCulture),
+                                discount = cartDiscount.ToString("0.00", CultureInfo.InvariantCulture)
                             }
                         }
                     };
 
-                    trackEvent.Label = EcomailDefaults.CartUpdatedEventName;
                     trackEvent.Value = JsonConvert.SerializeObject(data).ToString();
                 }
                 else
                 {
                     //there are no items in the cart, so the cart is deleted
-                    trackEvent.Label = EcomailDefaults.CartDeletedEventName;
                     trackEvent.Value = string.Empty;
                 }
 
-                var payload = JsonConvert.SerializeObject(new EcomailTrackEvent
-                {
-                    Event = trackEvent,
-                });
+                var payload = JsonConvert.SerializeObject(new EcomailTrackEvent { Event = trackEvent });
                 try
                 {
-                    var response = await _ecomailHttpClient.RequestAsync(EcomailDefaults.EcomailTrackEventApiUrl, payload, HttpMethod.Post);
+                    var response = await _ecomailHttpClient.RequestAsync(EcomailDefaults.TrackEventApiUrl, payload, HttpMethod.Post);
                 }
                 catch (Exception ex)
                 {
@@ -975,45 +1193,61 @@ namespace Nop.Plugin.Misc.Ecomail.Services
         }
 
         /// <summary>
-        /// Handle order placed event
+        /// Handle order event
         /// </summary>
         /// <param name="order">Order</param>
+        /// <param name="orderEventType">Order event type</param>
         /// <returns>A task that represents the asynchronous operation</returns>
-        public async Task HandleOrderPlacedEventAsync(Order order)
+        public async Task HandleOrderEventAsync(Order order, OrderEventType orderEventType)
         {
             await HandleFunctionAsync(async () =>
             {
                 if (order is null)
                     throw new ArgumentNullException(nameof(order));
 
+                if (_ecomailSettings.OrderEventType != orderEventType)
+                    return false;
+
                 if (string.IsNullOrEmpty(_ecomailSettings.ApiKey))
                     throw new NopException("Plugin not configured");
 
-                if (!_ecomailSettings.UseTracking)
-                    throw new NopException("Tracking not enabled");
+                var billingAddress = await _addressService.GetAddressByIdAsync(order?.BillingAddressId ?? 0);
+                var email = billingAddress?.Email;
+                if (string.IsNullOrEmpty(email))
+                    throw new NopException("Email not set");
+
+                var subscription = await _newsLetterSubscriptionService.GetNewsLetterSubscriptionByEmailAndStoreIdAsync(email, order.StoreId);
+                if (subscription is null && _ecomailSettings.SyncSubscribersOnly)
+                    throw new NopException("Subscription not found");
+
+                //first sync customer contact
+                subscription ??= new() { Email = email, StoreId = order.StoreId };
+                await SubscribeContactAsync(subscription, billingAddress);
 
                 var customer = await _customerService.GetCustomerByIdAsync(order.CustomerId)
                     ?? throw new NopException("Customer not found");
 
-                var subscription = await _newsLetterSubscriptionService.GetNewsLetterSubscriptionByEmailAndStoreIdAsync(customer.Email, order.StoreId)
-                    ?? throw new NopException("Subscription not found");
+                if (!_ecomailSettings.ImportOrdersOnSync)
+                    throw new NopException("Order sync not enabled");
 
                 var store = await _storeService.GetStoreByIdAsync(order.StoreId);
-                var billingAddress = await _addressService.GetAddressByIdAsync(order.BillingAddressId);
                 var country = await _countryService.GetCountryByIdAsync(billingAddress?.CountryId ?? 0);
-                var timestamp = (int)new DateTimeOffset(order.CreatedOnUtc).ToUnixTimeSeconds();
-
+                var orderDate = DateTime.SpecifyKind(orderEventType == OrderEventType.Paid
+                    ? (order.PaidDateUtc ?? order.CreatedOnUtc)
+                    : order.CreatedOnUtc, DateTimeKind.Utc);
+                var timestamp = (int)new DateTimeOffset(orderDate).ToUnixTimeSeconds();
                 var transactionData = new TransactionData
                 {
                     OrderId = order.Id,
-                    Email = customer.Email ?? string.Empty,
+                    OrderNumber = order.CustomOrderNumber ?? order.Id.ToString(),
+                    Email = billingAddress.Email ?? string.Empty,
                     Shop = store?.Url ?? string.Empty,
-                    Amount = order.OrderTotal,
-                    Tax = order.OrderTax,
-                    Shipping = order.OrderShippingExclTax,
+                    Amount = order.OrderTotal.ToString("0.00", CultureInfo.InvariantCulture),
+                    Tax = order.OrderTax.ToString("0.00", CultureInfo.InvariantCulture),
+                    Shipping = order.OrderShippingExclTax.ToString("0.00", CultureInfo.InvariantCulture),
                     City = billingAddress?.City ?? string.Empty,
                     County = billingAddress?.County ?? string.Empty,
-                    Country = country?.Name ?? string.Empty,
+                    Country = country?.TwoLetterIsoCode ?? string.Empty,
                     Timestamp = timestamp
                 };
 
@@ -1032,20 +1266,28 @@ namespace Nop.Plugin.Misc.Ecomail.Services
                         ItemCode = product.Id.ToString(),
                         Title = product.Name ?? string.Empty,
                         Category = category?.Name ?? "No category",
-                        Price = orderItem.PriceInclTax,
+                        Price = orderItem.PriceInclTax.ToString("0.00", CultureInfo.InvariantCulture),
                         Quantity = orderItem.Quantity,
                         Timestamp = timestamp,
                     };
                 }).Where(item => item is not null).ToListAsync();
 
-                var payload = JsonConvert.SerializeObject(new TransectionCreateRequest
+                var payload = JsonConvert.SerializeObject(new TransactionCreateRequest
                 {
                     TransactionData = transactionData,
                     TransactionItems = transactionItems
                 });
                 try
                 {
-                    var response = await _ecomailHttpClient.RequestAsync(EcomailDefaults.AddTransactionDataToEcomailApiUrl, payload, HttpMethod.Post);
+                    var response = await _ecomailHttpClient.RequestAsync(EcomailDefaults.AddTransactionDataApiUrl, payload, HttpMethod.Post);
+                    var transaction = JsonConvert.DeserializeAnonymousType(response, new { Transaction = new { Id = string.Empty } }).Transaction;
+                    await _ecomailOrderService.InsertOrderAsync(new()
+                    {
+                        OrderId = order.Id,
+                        TransactionId = transaction?.Id,
+                        ApiKey = _ecomailSettings.ApiKey,
+                        CreatedOnUtc = DateTime.UtcNow
+                    });
                 }
                 catch (Exception ex)
                 {
@@ -1135,11 +1377,8 @@ namespace Nop.Plugin.Misc.Ecomail.Services
         {
             var (path, _) = await HandleFunctionAsync(async () =>
             {
-                var store = await _storeContext.GetCurrentStoreAsync();
-
                 _nopFileProvider.CreateDirectory(_nopFileProvider.GetAbsolutePath(EcomailDefaults.FeedsDirectory));
-                var fileName = string.Format(EcomailDefaults.FeedFileName, store.Id);
-                var fullPath = _nopFileProvider.GetAbsolutePath(EcomailDefaults.FeedsDirectory, fileName);
+                var fullPath = _nopFileProvider.GetAbsolutePath(EcomailDefaults.FeedsDirectory, EcomailDefaults.FeedFileName);
                 if (_nopFileProvider.FileExists(fullPath))
                 {
                     if (_nopFileProvider.GetLastWriteTimeUtc(fullPath) > DateTime.UtcNow.AddHours(-_ecomailSettings.RebuildFeedXmlAfterHours))
@@ -1152,6 +1391,14 @@ namespace Nop.Plugin.Misc.Ecomail.Services
             });
 
             return path;
+        }
+
+        /// <summary>
+        /// Text writer that writes to a string buffer with UTF8 encoding
+        /// </summary>
+        public class Utf8StringWriter : StringWriter
+        {
+            public override Encoding Encoding => Encoding.UTF8;
         }
 
         #endregion

@@ -1,6 +1,6 @@
 ﻿using Newtonsoft.Json;
 
-namespace Nop.Plugin.Misc.Ecomail.Domains.Api.Tracking
+namespace Nop.Plugin.Misc.Ecomail.Domain.Api.Tracking
 {
     public class EcomailEvent
     {

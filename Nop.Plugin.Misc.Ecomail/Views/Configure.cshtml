@@ -4,21 +4,18 @@
     Layout = "_ConfigurePlugin";
 }
 
-@await Component.InvokeAsync("StoreScopeConfiguration")
-
 <form asp-controller="EcomailAdmin" asp-action="Configure" method="post">
     <nop-cards id="ecomail-cards">
-        <nop-card asp-name="ecomail-general" asp-icon="fas fa-info" asp-title="@T("Plugins.Misc.Ecomail.Credentials")" asp-hide-block-attribute-name="@EcomailDefaults.HideGeneralBlock" asp-hide="@Model.HideGeneralBlock" asp-advanced="false">
+        <nop-card asp-name="ecomail-general" asp-icon="fas fa-info" asp-title="@T("Plugins.Misc.Ecomail.Credentials")" asp-hide-block-attribute-name="ecomail-general" asp-hide="false" asp-advanced="false">
             <div class="card-body">
                 <div class="card card-default">
                     <div class="card-body">
                         <p>
                             Find <b>API key</b> and tracking parameters of your Ecomail account on Manage Account → Integration page, then enter them in the fields below and save.<br />
-                            You can use products from product feeds in your email templates. To upload your product feed go to your Ecomail account → More → Data feeds, click <b>"Add data feed"</b> button and enter <em>@Model.FeedUrl</em> in <b>"URL feed"</b> field.<br />
+                            @*You can use products from product feeds in your email templates. To upload your product feed go to your Ecomail account → More → Data feeds, click <b>"Add data feed"</b> button and enter <em>@Model.FeedUrl</em> in <b>"URL feed"</b> field.<br />*@
                         </p>
                         <div class="form-group row">
                             <div class="col-md-3">
-                                <nop-override-store-checkbox asp-for="ApiKey_OverrideForStore" asp-input="ApiKey" asp-store-scope="@Model.ActiveStoreScopeConfiguration" />
                                 <nop-label asp-for="ApiKey" />
                             </div>
                             <div class="col-md-9">
@@ -28,7 +25,6 @@
                         </div>
                         <div class="form-group row">
                             <div class="col-md-3">
-                                <nop-override-store-checkbox asp-for="UseTracking_OverrideForStore" asp-input="UseTracking" asp-store-scope="@Model.ActiveStoreScopeConfiguration" />
                                 <nop-label asp-for="UseTracking" />
                             </div>
                             <div class="col-md-9">
@@ -39,7 +35,6 @@
                         <nop-nested-setting asp-for="UseTracking">
                             <div class="form-group row">
                                 <div class="col-md-3">
-                                    <nop-override-store-checkbox asp-for="TrackingScript_OverrideForStore" asp-input="TrackingScript" asp-store-scope="@Model.ActiveStoreScopeConfiguration" />
                                     <nop-label asp-for="TrackingScript" />
                                 </div>
                                 <div class="col-md-9">
@@ -49,7 +44,6 @@
                             </div>
                             <div class="form-group row">
                                 <div class="col-md-3">
-                                    <nop-override-store-checkbox asp-for="AppId_OverrideForStore" asp-input="AppId" asp-store-scope="@Model.ActiveStoreScopeConfiguration" />
                                     <nop-label asp-for="AppId" />
                                 </div>
                                 <div class="col-md-9">
@@ -69,7 +63,7 @@
         </nop-card>
         @if (!string.IsNullOrEmpty(Model.ApiKey))
         {
-            <nop-card asp-name="ecomail-synchronization" asp-icon="fas fa-exchange-alt" asp-title="@T("Plugins.Misc.Ecomail.Sync")" asp-hide-block-attribute-name="@EcomailDefaults.HideSynchronizationBlock" asp-hide="@Model.HideSynchronizationBlock" asp-advanced="false">
+            <nop-card asp-name="ecomail-synchronization" asp-icon="fas fa-exchange-alt" asp-title="@T("Plugins.Misc.Ecomail.Sync")" asp-hide-block-attribute-name="ecomail-sync" asp-hide="false" asp-advanced="false">
                 <div class="card-body">
                     <p>
                         Select a list to sync contacts (newsletter subscribers) from your store to your Ecomail account. You can also create a new list here.<br />
@@ -137,7 +131,6 @@
                         <div class="card-body">
                             <div class="form-group row">
                                 <div class="col-md-3">
-                                    <nop-override-store-checkbox asp-for="ListId_OverrideForStore" asp-input="ListId" asp-store-scope="@Model.ActiveStoreScopeConfiguration" />
                                     <nop-label asp-for="ListId" />
                                 </div>
                                 <div class="col-md-9">
@@ -145,6 +138,52 @@
                                     <span asp-validation-for="ListId"></span>
                                 </div>
                             </div>
+                            <div class="form-group row">
+                                <div class="col-md-3">
+                                    <nop-label asp-for="SyncSubscribersOnly" />
+                                </div>
+                                <div class="col-md-9">
+                                    <nop-editor asp-for="SyncSubscribersOnly" />
+                                    <span asp-validation-for="SyncSubscribersOnly"></span>
+                                </div>
+                            </div>
+                            <div class="form-group row">
+                                <div class="col-md-3">
+                                    <nop-label asp-for="ImportOrdersOnSync" />
+                                </div>
+                                <div class="col-md-9">
+                                    <nop-editor asp-for="ImportOrdersOnSync" />
+                                    <span asp-validation-for="ImportOrdersOnSync"></span>
+                                </div>
+                            </div>
+                            @*<nop-nested-setting asp-for="ImportOrdersOnSync">
+                                <div class="form-group row">
+                                    <div class="col-md-3">
+                                        <nop-label asp-for="OrderStatuses" />
+                                    </div>
+                                    <div class="col-md-9">
+                                        <nop-select asp-for="OrderStatuses" asp-items="Model.AvailableOrderStatuses" asp-multiple="true" />
+                                        <script>
+                                            $(document).ready(function () {
+                                                var input = $('#@Html.IdFor(model => model.OrderStatuses)').data("kendoMultiSelect");
+                                                input.setOptions({
+                                                    autoClose: false,
+                                                    filter: "contains"
+                                                });
+                                            });
+                                        </script>
+                                    </div>
+                                </div>
+                                <div class="form-group row">
+                                    <div class="col-md-3">
+                                        <nop-label asp-for="OrderEventTypeId" />
+                                    </div>
+                                    <div class="col-md-9">
+                                        <nop-select asp-for="OrderEventTypeId" asp-items="Model.AvailableOrderEventTypes" />
+                                        <span asp-validation-for="OrderEventTypeId"></span>
+                                    </div>
+                                </div>
+                            </nop-nested-setting>*@
                             <div class="form-group row">
                                 <div class="col-md-3">
                                     <nop-label asp-for="ConsentId" />

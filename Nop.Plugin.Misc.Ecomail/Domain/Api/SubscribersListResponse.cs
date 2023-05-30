@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using Newtonsoft.Json;
 
-namespace Nop.Plugin.Misc.Ecomail.Domains.Api
+namespace Nop.Plugin.Misc.Ecomail.Domain.Api
 {
     public class SubscribersListResponse
     {
@@ -48,9 +48,9 @@ namespace Nop.Plugin.Misc.Ecomail.Domains.Api
         public int SmsStatus { get; set; }
 
         [JsonProperty("subscribed_at")]
-        public DateTimeOffset SubscribedAt { get; set; }
+        public DateTimeOffset? SubscribedAt { get; set; }
 
         [JsonProperty("unsubscribed_at")]
-        public object UnsubscribedAt { get; set; }
+        public DateTimeOffset? UnsubscribedAt { get; set; }
     }
 }

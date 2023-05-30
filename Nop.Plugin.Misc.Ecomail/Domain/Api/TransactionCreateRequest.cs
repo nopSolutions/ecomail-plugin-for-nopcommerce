@@ -1,9 +1,9 @@
 ﻿using System.Collections.Generic;
 using Newtonsoft.Json;
 
-namespace Nop.Plugin.Misc.Ecomail.Domains.Api
+namespace Nop.Plugin.Misc.Ecomail.Domain.Api
 {
-    public class TransectionCreateRequest
+    public class TransactionCreateRequest
     {
         [JsonProperty("transaction")]
         public TransactionData TransactionData { get; set; }
@@ -14,8 +14,11 @@ namespace Nop.Plugin.Misc.Ecomail.Domains.Api
 
     public class TransactionData
     {
-        [JsonProperty("order_id")]
+        [JsonIgnore]
         public int OrderId { get; set; }
+
+        [JsonProperty("order_id")]
+        public string OrderNumber { get; set; }
 
         [JsonProperty("email")]
         public string Email { get; set; }
@@ -24,13 +27,13 @@ namespace Nop.Plugin.Misc.Ecomail.Domains.Api
         public string Shop { get; set; }
 
         [JsonProperty("amount")]
-        public decimal Amount { get; set; }
+        public string Amount { get; set; }
 
         [JsonProperty("tax")]
-        public decimal Tax { get; set; }
+        public string Tax { get; set; }
 
         [JsonProperty("shipping")]
-        public decimal Shipping { get; set; }
+        public string Shipping { get; set; }
 
         [JsonProperty("city")]
         public string City { get; set; }

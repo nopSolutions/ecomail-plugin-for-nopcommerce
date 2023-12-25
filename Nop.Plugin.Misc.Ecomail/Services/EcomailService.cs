@@ -1130,7 +1130,7 @@ namespace Nop.Plugin.Misc.Ecomail.Services
                         var mappings = await _categoryService.GetProductCategoriesByProductIdAsync(product.Id);
                         var category = await _categoryService.GetCategoryByIdAsync(mappings.FirstOrDefault()?.CategoryId ?? 0);
                         var (unitPrice, _, _) = await _shoppingCartService.GetUnitPriceAsync(item, true);
-                        var (itemPrice, _) = await _taxService.GetProductPriceAsync(product, unitPrice, false, customer);
+                        var (itemPrice, _) = await _taxService.GetProductPriceAsync(product, unitPrice, true, customer);
 
                         return new TrackCartProduct
                         {

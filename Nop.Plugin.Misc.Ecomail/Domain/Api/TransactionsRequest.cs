@@ -1,11 +1,9 @@
-﻿using System.Collections.Generic;
-using Newtonsoft.Json;
+﻿using Newtonsoft.Json;
 
-namespace Nop.Plugin.Misc.Ecomail.Domain.Api
+namespace Nop.Plugin.Misc.Ecomail.Domain.Api;
+
+public class TransactionsRequest
 {
-    public class TransactionsRequest
-    {
-        [JsonProperty("transaction_data")]
-        public List<TransactionCreateRequest> Transactions { get; set; }
-    }
+    [JsonProperty("transaction_data")]
+    public List<TransactionCreateRequest> Transactions { get; set; }
 }

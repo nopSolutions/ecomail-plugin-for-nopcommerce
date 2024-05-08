@@ -1,18 +1,17 @@
-﻿namespace Nop.Plugin.Misc.Ecomail.Domain
+﻿namespace Nop.Plugin.Misc.Ecomail.Domain;
+
+/// <summary>
+/// Represents order event type enumeration
+/// </summary>
+public enum OrderEventType
 {
     /// <summary>
-    /// Represents order event type enumeration
+    /// Transaction request should be sent when order is placed
     /// </summary>
-    public enum OrderEventType
-    {
-        /// <summary>
-        /// Transaction request should be sent when order is placed
-        /// </summary>
-        Placed = 0,
+    Placed = 0,
 
-        /// <summary>
-        /// Transaction request should be sent when order is paid
-        /// </summary>
-        Paid = 10
-    }
+    /// <summary>
+    /// Transaction request should be sent when order is paid
+    /// </summary>
+    Paid = 10
 }
